@@ -195,6 +195,7 @@
                             <th class="py-3.5 pr-4 font-medium">Customer</th>
                             <th class="py-3.5 pr-4 font-medium">Payment</th>
                             <th class="py-3.5 pr-4 font-medium">Fulfillment</th>
+                            <th class="py-3.5 pr-4 font-medium">Shipment</th>
                             <th class="py-3.5 pr-4 text-right font-medium">
                                 <a href="{{ $sortLink('total') }}" class="inline-flex items-center gap-1 transition-colors hover:text-ink">Total
                                     <x-dashboard.icon :name="$currentSort === 'total' ? ($currentDirection === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down'" class="h-3 w-3 {{ $currentSort === 'total' ? 'text-ink' : 'text-faint' }}" />
@@ -208,7 +209,7 @@
                             @include('orders._row', ['order' => $order])
                         @empty
                             <tr>
-                                <td colspan="8" class="px-4 py-16">
+                                <td colspan="9" class="px-4 py-16">
                                     <div class="mx-auto flex max-w-xs flex-col items-center text-center">
                                         <span class="flex h-12 w-12 items-center justify-center rounded-full bg-canvas text-faint">
                                             <x-dashboard.icon name="orders" class="h-5 w-5" />

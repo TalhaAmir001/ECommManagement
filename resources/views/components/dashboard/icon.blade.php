@@ -155,6 +155,42 @@
             <rect x="3" y="4" width="18" height="18" rx="2" />
             <path d="M3 10h18" />
             @break
+        @case('plus')
+            <line x1="12" x2="12" y1="5" y2="19" />
+            <line x1="5" x2="19" y1="12" y2="12" />
+            @break
+        @case('refresh')
+            <path d="M21 12a9 9 0 1 1-3-6.7" />
+            <polyline points="21 4 21 10 15 10" />
+            @break
+        @case('pause')
+            <rect x="6" y="4" width="4" height="16" rx="1" />
+            <rect x="14" y="4" width="4" height="16" rx="1" />
+            @break
+        @case('play')
+            <polygon points="5 3 19 12 5 21 5 3" />
+            @break
+        @case('truck')
+            <path d="M1 3h15v13H1z" />
+            <path d="M16 8h4l3 3v5h-7" />
+            <circle cx="5.5" cy="18.5" r="2.5" />
+            <circle cx="18.5" cy="18.5" r="2.5" />
+            @break
+        @case('link')
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07L11.76 5.18" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07L12.24 18.82" />
+            @break
+        @case('link-2')
+            <path d="M9 17H7a5 5 0 0 1 0-10h2" />
+            <path d="M15 7h2a5 5 0 0 1 0 10h-2" />
+            <line x1="8" y1="12" x2="16" y2="12" />
+            @break
+        @case('unlink')
+            <path d="M18.84 12.61a4 4 0 0 0-5.66-5.66L11 9" />
+            <path d="M5.16 11.39a4 4 0 0 0 5.66 5.66L13 15" />
+            <line x1="8" y1="12" x2="11" y2="12" />
+            <line x1="2" y1="2" x2="22" y2="22" />
+            @break
         @default
             <circle cx="12" cy="12" r="9" />
     @endswitch

@@ -30,6 +30,19 @@
     <td class="py-3.5 pr-4">
         <x-dashboard.fulfillment-pill :status="$order->fulfillment_status" />
     </td>
+    <td class="py-3.5 pr-4">
+        @php($latestShipment = $order->shipments->first())
+        @if ($latestShipment)
+            <a href="{{ route('shipments.show', $latestShipment) }}" class="font-medium text-ink hover:text-accent tabular-nums">
+                {{ $latestShipment->tracking_number }}
+            </a>
+            <div class="mt-1">
+                <x-dashboard.courier-status-pill :status="$latestShipment->status" />
+            </div>
+        @else
+            <span class="text-xs text-faint">Not shipped</span>
+        @endif
+    </td>
     <td class="py-3.5 pr-4 text-right">
         <span class="font-semibold tabular-nums text-ink">${{ number_format((float) $order->total, 2) }}</span>
     </td>

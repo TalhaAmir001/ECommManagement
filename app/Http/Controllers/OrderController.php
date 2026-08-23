@@ -44,7 +44,11 @@ class OrderController extends Controller
     {
         $query = Order::query()
             ->with('customer')
-            ->withCount('items');
+            ->withCount('items')
+            // Most recent shipment per order, used to render the tracking cell.
+            ->with(['shipments' => function ($q) {
+                $q->orderByDesc('last_event_at')->orderByDesc('id')->limit(1);
+            }, 'shipments.provider']);
 
         $this->applyFilters($query, $request);
         $this->applySorting($query, $request);

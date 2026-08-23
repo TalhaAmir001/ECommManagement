@@ -21,7 +21,8 @@
             'label' => 'Insights',
             'items' => [
                 ['icon' => 'analytics', 'label' => 'Analytics', 'route' => null],
-                ['icon' => 'reports', 'label' => 'Reports', 'route' => null],
+                ['icon' => 'reports', 'label' => 'Reports', 'route' => 'audit.index'],
+                ['icon' => 'truck', 'label' => 'Shipments', 'route' => 'shipments.index'],
             ],
         ],
         [

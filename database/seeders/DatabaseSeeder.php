@@ -10,6 +10,9 @@ use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
+
+class DatabaseSeeder extends Seeder
+{
     use WithoutModelEvents;
 
     /**
@@ -17,6 +20,10 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call([
+            CourierProvidersSeeder::class,
+        ]);
+
         $customers = Customer::factory(24)->create();
         $products = Product::factory(40)->create();
 

@@ -20,6 +20,7 @@ class Customer extends Model
     protected $fillable = [
         'name',
         'email',
+        'phone',
         'country',
         'created_at',
         'shopify_id',

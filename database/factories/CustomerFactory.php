@@ -20,6 +20,7 @@ class CustomerFactory extends Factory
         return [
             'name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
+            'phone' => '03'.fake()->numerify('#########'),
             'country' => fake()->randomElement([
                 'United States', 'United Kingdom', 'Germany', 'France', 'Canada',
                 'Australia', 'Netherlands', 'Japan', 'Spain', 'Brazil',
