@@ -37,7 +37,7 @@
                         <x-dashboard.status-pill :status="$order->status" />
                     </td>
                     <td class="py-3.5 pr-4 tabular-nums text-muted">{{ $order->created_at->format('M j, Y') }}</td>
-                    <td class="py-3.5 text-right font-semibold tabular-nums text-ink">${{ number_format((float) $order->total, 2) }}</td>
+                    <td class="py-3.5 text-right font-semibold tabular-nums text-ink">{{ format_money((float) $order->total, 2) }}</td>
                 </tr>
             @empty
                 <tr>

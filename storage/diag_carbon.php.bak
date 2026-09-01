@@ -1,0 +1,7 @@
+<?php
+require __DIR__.'/vendor/autoload.php';
+$d = \Illuminate\Support\Carbon::createFromFormat('Y-m-d H:i', '2026-08-26 10:00');
+var_dump($d ? $d->toDateTimeString() : 'FAILED', \Illuminate\Support\Carbon::getLastErrors());
+
+$d2 = \Illuminate\Support\Carbon::createFromFormat('!Y-m-d H:i', '2026-08-26 10:00');
+var_dump($d2 ? $d2->toDateTimeString() : 'FAILED', \Illuminate\Support\Carbon::getLastErrors());

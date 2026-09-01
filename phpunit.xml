@@ -32,5 +32,10 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <!-- Tests stub APP_URL to the host root so synthetic test requests
+             resolve against the routes registered at "/". Production keeps
+             APP_URL=http://localhost/ECommManagement so URL generation
+             includes the subpath. -->
+        <env name="APP_URL" value="http://localhost"/>
     </php>
 </phpunit>

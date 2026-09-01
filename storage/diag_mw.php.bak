@@ -1,0 +1,19 @@
+<?php
+// Quick check of what $request->server looks like in a test-like context.
+require __DIR__.'/vendor/autoload.php';
+$app = require __DIR__.'/bootstrap/app.php';
+$app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
+
+$request = \Illuminate\Http\Request::create(
+    '/ECommManagement/dashboard',
+    'GET',
+    [],
+    [],
+    [],
+    ['REQUEST_URI' => '/ECommManagement/dashboard', 'HTTP_HOST' => 'localhost'],
+);
+
+echo 'Class: '.get_class($request).PHP_EOL;
+echo 'server class: '.get_class($request->server).PHP_EOL;
+echo 'server is array? '.(is_array($request->server) ? 'YES' : 'NO').PHP_EOL;
+echo 'server count: '.count($request->server).PHP_EOL;

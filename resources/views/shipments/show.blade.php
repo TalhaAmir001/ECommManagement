@@ -21,8 +21,17 @@
                 </div>
                 <p class="mt-1 text-sm text-muted">
                     {{ $shipment->provider->display_name }}
+                    @if ($shipment->carrier_name)
+                        · {{ $shipment->carrier_name }}
+                    @endif
                     @if ($shipment->reference)
                         · Ref {{ $shipment->reference }}
+                    @endif
+                    @if ($shipment->tracking_url)
+                        · <a href="{{ $shipment->tracking_url }}" target="_blank" rel="noopener" class="text-accent hover:underline">Open tracking ↗</a>
+                    @endif
+                    @if (! empty($refreshStrategy) && $refreshStrategy !== 'none')
+                        · refresh via <span class="font-medium text-ink">{{ $refreshStrategy }}</span>
                     @endif
                 </p>
             </div>
@@ -143,19 +152,65 @@
                             </form>
                             <form method="POST" action="{{ route('shipments.unlink', $shipment) }}">
                                 @csrf
-                                <button type="submit" class="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-canvas">Unlink</button>
+                                <button type="submit" class="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-canvas" onclick="return confirm('Unlink this shipment from order {{ $shipment->order->number }}?\n\nThe shipment will stay in the Shipments list but will no longer be associated with any order.');">Unlink</button>
                             </form>
                         </div>
+
+                        {{-- Switch-order subsection. Clicking "Switch" reveals
+                             the same typeahead the new-shipment form uses,
+                             plus a confirmation checkbox that's only shown
+                             when the picked order differs from the current
+                             one. --}}
+                        <details class="mt-4 rounded-lg border border-line bg-canvas/40 px-3 py-2 text-xs">
+                            <summary class="cursor-pointer font-medium text-ink">Switch to a different order</summary>
+                            <form method="POST" action="{{ route('shipments.link', $shipment) }}" class="mt-3 space-y-2" data-shipment-link-form>
+                                @csrf
+                                <div data-order-picker
+                                    data-lookup-url="{{ route('shipments.lookup-orders') }}">
+                                    <input type="hidden" name="order_id" value="{{ $shipment->order_id }}" data-order-picker-id />
+                                    <input
+                                        type="text"
+                                        name="order_search"
+                                        placeholder="Search by order #, customer name, email, or phone…"
+                                        autocomplete="off"
+                                        data-order-picker-input
+                                        class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                                    <ul class="mt-2 hidden divide-y divide-line rounded-lg border border-line bg-surface shadow-sm shadow-ink/[0.02]" data-order-picker-results role="listbox"></ul>
+                                    <label class="mt-2 hidden items-start gap-2 rounded-lg border border-line bg-warning-soft px-3 py-2" data-switch-confirm data-current-order-id="{{ $shipment->order_id }}">
+                                        <input type="checkbox" name="confirm" value="1" class="mt-0.5 h-4 w-4 rounded border-line-strong accent-ink" />
+                                        <span>
+                                            <span class="font-medium text-ink">Confirm switching</span>
+                                            <span class="block text-muted">This will move the shipment away from <span class="font-medium text-ink">{{ $shipment->order->number }}</span> to the order you pick above. The auto-matcher won't undo it.</span>
+                                        </span>
+                                    </label>
+                                </div>
+                                <button type="submit" class="rounded-lg bg-ink px-3 py-1.5 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Switch</button>
+                            </form>
+                        </details>
                     @else
                         <p class="mt-3 text-sm text-muted">This shipment is not linked to an order.</p>
-                        <form method="POST" action="{{ route('shipments.link', $shipment) }}" class="mt-3 flex gap-2">
+                        <form method="POST" action="{{ route('shipments.link', $shipment) }}" class="mt-3 space-y-2" data-shipment-link-form>
                             @csrf
-                            <input name="order_number" placeholder="Order #" class="flex-1 rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
-                            <button type="submit" class="rounded-lg bg-ink px-3 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Link</button>
-                        </form>
-                        <form method="POST" action="{{ route('shipments.rematch', $shipment) }}" class="mt-2">
-                            @csrf
-                            <button type="submit" class="text-xs font-medium text-muted transition-colors hover:text-ink">Try auto-match</button>
+                            <div data-order-picker
+                                data-lookup-url="{{ route('shipments.lookup-orders') }}"
+                                data-current-order-id="">
+                                <input type="hidden" name="order_id" value="" data-order-picker-id />
+                                <input
+                                    type="text"
+                                    name="order_search"
+                                    placeholder="Search by order #, customer name, email, or phone…"
+                                    autocomplete="off"
+                                    data-order-picker-input
+                                    class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                                <ul class="mt-2 hidden divide-y divide-line rounded-lg border border-line bg-surface shadow-sm shadow-ink/[0.02]" data-order-picker-results role="listbox"></ul>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <button type="submit" class="rounded-lg bg-ink px-3 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Link</button>
+                                <form method="POST" action="{{ route('shipments.rematch', $shipment) }}" class="contents">
+                                    @csrf
+                                    <button type="submit" class="text-xs font-medium text-muted transition-colors hover:text-ink">Or try auto-match</button>
+                                </form>
+                            </div>
                         </form>
                     @endif
                 </div>
@@ -186,13 +241,13 @@
                         <div>
                             <dt class="text-xs text-muted">COD</dt>
                             <dd class="mt-0.5 font-medium text-ink tabular-nums">
-                                {{ $shipment->cod_amount !== null ? $shipment->currency . ' ' . number_format((float) $shipment->cod_amount, 2) : '—' }}
+                                {{ $shipment->cod_amount !== null ? format_money((float) $shipment->cod_amount) : '—' }}
                             </dd>
                         </div>
                         <div>
                             <dt class="text-xs text-muted">Shipping cost</dt>
                             <dd class="mt-0.5 font-medium text-ink tabular-nums">
-                                {{ $shipment->cost !== null ? $shipment->currency . ' ' . number_format((float) $shipment->cost, 2) : '—' }}
+                                {{ $shipment->cost !== null ? format_money((float) $shipment->cost) : '—' }}
                             </dd>
                         </div>
                         <div>

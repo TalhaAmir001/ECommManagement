@@ -6,8 +6,10 @@ use App\Models\Customer;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
+use App\Services\JournalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
@@ -41,6 +43,18 @@ class DashboardController extends Controller
         $customersPrevious = (int) Customer::whereBetween('created_at', [$previousStart, $start])->count();
         $aovPrevious = $ordersPrevious > 0 ? round($revenuePrevious / $ordersPrevious, 2) : 0.0;
 
+        // P&L: gross profit + journal adjustment.
+        $cogsCurrent = $this->cogsBetween($start, $now);
+        $cogsPrevious = $this->cogsBetween($previousStart, $start);
+        $grossProfitCurrent = round($revenueCurrent - $cogsCurrent, 2);
+        $grossProfitPrevious = round($revenuePrevious - $cogsPrevious, 2);
+
+        $journal = app(JournalService::class);
+        $journalCurrent = $journal->pnlTotals($start, $now);
+        $journalPrevious = $journal->pnlTotals($previousStart, $start);
+        $netProfitCurrent = round($grossProfitCurrent + $journalCurrent['net_adjustment'], 2);
+        $netProfitPrevious = round($grossProfitPrevious + $journalPrevious['net_adjustment'], 2);
+
         $stats = [
             'revenue' => [
                 'label' => 'Revenue',
@@ -72,9 +86,22 @@ class DashboardController extends Controller
             ],
         ];
 
+        $pnl = [
+            'gross_profit' => $grossProfitCurrent,
+            'gross_profit_delta' => $this->percentChange($grossProfitCurrent, $grossProfitPrevious),
+            'journal_expense' => $journalCurrent['total_expense'],
+            'journal_expense_previous' => $journalPrevious['total_expense'],
+            'journal_income' => $journalCurrent['total_income'],
+            'journal_income_previous' => $journalPrevious['total_income'],
+            'journal_net' => $journalCurrent['net_adjustment'],
+            'net_profit' => $netProfitCurrent,
+            'net_profit_delta' => $this->percentChange($netProfitCurrent, $netProfitPrevious),
+        ];
+
         return view('dashboard.index', [
             'range' => $range,
             'stats' => $stats,
+            'pnl' => $pnl,
             'revenueSeries' => $daily['revenue'],
             'salesByCategory' => $this->salesByCategory($start, $now),
             'recentOrders' => Order::with('customer')->latest()->take(8)->get(),
@@ -144,6 +171,19 @@ class DashboardController extends Controller
             ->whereIn('status', self::ACTIVE_STATUSES)
             ->whereBetween('created_at', [$start, $end])
             ->count();
+    }
+
+    /**
+     * Total COGS (sum of product cost × quantity) between two dates.
+     */
+    private function cogsBetween(Carbon $start, Carbon $end): float
+    {
+        return (float) OrderItem::query()
+            ->join('orders', 'orders.id', '=', 'order_items.order_id')
+            ->join('products', 'products.id', '=', 'order_items.product_id')
+            ->whereIn('orders.status', self::ACTIVE_STATUSES)
+            ->whereBetween('orders.created_at', [$start, $end])
+            ->sum(DB::raw('order_items.quantity * products.cost'));
     }
 
     /**

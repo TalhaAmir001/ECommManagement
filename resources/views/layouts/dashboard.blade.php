@@ -12,13 +12,13 @@
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
     <body class="bg-canvas text-ink antialiased">
-        <div class="flex min-h-screen">
+        {{-- Shell: locked to the viewport. The sidebar stays fixed in place;
+             only the <main> content area scrolls independently. --}}
+        <div class="flex h-screen overflow-hidden supports-[height:100dvh]:h-[100dvh]">
             <x-dashboard.sidebar />
 
-            <div class="flex min-w-0 flex-1 flex-col">
-                <x-dashboard.topbar />
-
-                <main class="flex-1">
+            <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+                <main class="flex-1 overflow-y-auto">
                     @yield('content')
                 </main>
             </div>

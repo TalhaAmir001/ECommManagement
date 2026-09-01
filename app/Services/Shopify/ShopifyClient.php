@@ -190,46 +190,17 @@ class ShopifyClient
      */
     public function orderById(string $id): array
     {
-        $data = $this->graphql(<<<'GRAPHQL'
+        $data = $this->graphql(
+            <<<'GRAPHQL'
             query ShopifyOrder($id: ID!) {
                 order(id: $id) {
-                    id
-                    name
-                    createdAt
-                    displayFinancialStatus
-                    displayFulfillmentStatus
-                    totalPriceSet {
-                        shopMoney { amount }
-                    }
-                    customer {
-                        id
-                        displayName
-                        email
-                        createdAt
-                        defaultAddress { country }
-                    }
-                    lineItems(first: 250) {
-                        edges {
-                            node {
-                                id
-                                quantity
-                                title
-                                originalUnitPriceSet {
-                                    shopMoney { amount }
-                                }
-                                variant {
-                                    id
-                                    sku
-                                    title
-                                    price
-                                    product { id title productType }
-                                }
-                            }
-                        }
-                    }
+                    ...OrderFields
                 }
             }
-            GRAPHQL, ['id' => $this->orderIdToGid($id)]);
+            GRAPHQL
+            .ShopifyQueries::ORDER_FIELDS,
+            ['id' => $this->orderIdToGid($id)]
+        );
 
         return $data['order'] ?? [];
     }

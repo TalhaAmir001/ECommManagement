@@ -8,7 +8,7 @@
                 <p class="truncate text-sm font-medium text-ink">{{ $product['name'] }}</p>
                 <p class="truncate text-xs text-muted">{{ $product['category'] }} · {{ $product['units'] }} sold</p>
             </div>
-            <span class="shrink-0 text-sm font-semibold tabular-nums text-ink">${{ number_format($product['revenue'], 2) }}</span>
+            <span class="shrink-0 text-sm font-semibold tabular-nums text-ink">{{ format_money($product['revenue'], 2) }}</span>
         </li>
     @empty
         <li class="py-8 text-center text-sm text-muted">No sales in this period yet.</li>

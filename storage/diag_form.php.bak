@@ -1,0 +1,36 @@
+<?php
+require __DIR__.'/vendor/autoload.php';
+$app = require __DIR__.'/bootstrap/app.php';
+$app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
+
+// Seed the manual provider so the page renders.
+\App\Models\CourierProvider::firstOrCreate(
+    ['key' => 'manual'],
+    [
+        'display_name' => 'Manual Entry',
+        'driver_class' => \App\Services\Courier\Providers\ManualProvider::class,
+        'enabled' => true,
+        'capabilities' => ['read_shipments', 'read_events', 'cod_support'],
+        'poll_interval_minutes' => 0,
+    ]
+);
+
+$req = \Illuminate\Http\Request::create(
+    'http://localhost/ECommManagement/shipments?show_form=create',
+    'GET',
+    [],
+    [],
+    [],
+    ['HTTP_HOST' => 'localhost', 'REQUEST_URI' => '/ECommManagement/shipments?show_form=create']
+);
+app()->instance('request', $req);
+
+$kernel = $app->make(\Illuminate\Contracts\Http\Kernel::class);
+$response = $kernel->handle($req);
+
+echo 'Status: '.$response->getStatusCode().PHP_EOL;
+$body = $response->getContent();
+echo 'Length: '.strlen($body).PHP_EOL;
+echo 'Contains "New manual shipment" heading: '.(str_contains($body, 'New manual shipment') ? 'YES' : 'NO').PHP_EOL;
+echo 'Contains "Create shipment" submit button: '.(str_contains($body, 'Create shipment') ? 'YES' : 'NO').PHP_EOL;
+echo 'Contains "name=\"tracking_number\"" input: '.(str_contains($body, 'name="tracking_number"') ? 'YES' : 'NO').PHP_EOL;

@@ -3,10 +3,12 @@
 namespace App\Models;
 
 use App\Enums\Courier\ShipmentStatus;
+use Database\Factories\ShipmentFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
@@ -16,22 +18,24 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string|null $reference
  * @property ShipmentStatus $status
  * @property string|null $status_detail
- * @property \Illuminate\Support\Carbon|null $shipped_at
- * @property \Illuminate\Support\Carbon|null $delivered_at
- * @property \Illuminate\Support\Carbon|null $last_event_at
+ * @property Carbon|null $shipped_at
+ * @property Carbon|null $delivered_at
+ * @property Carbon|null $last_event_at
  * @property int|null $order_id
  * @property string|null $matched_method
- * @property \Illuminate\Support\Carbon|null $matched_at
+ * @property Carbon|null $matched_at
  */
 class Shipment extends Model
 {
-    /** @use HasFactory<\Database\Factories\ShipmentFactory> */
+    /** @use HasFactory<ShipmentFactory> */
     use HasFactory;
 
     protected $fillable = [
         'courier_provider_id',
         'external_id',
         'tracking_number',
+        'carrier_name',
+        'tracking_url',
         'reference',
         'status',
         'status_detail',

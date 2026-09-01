@@ -1,0 +1,31 @@
+<?php
+require __DIR__.'/vendor/autoload.php';
+$app = require __DIR__.'/bootstrap/app.php';
+$app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
+
+echo 'APP_URL: '.config('app.url').PHP_EOL;
+
+// Simulate a production HTTP request through the .htaccess chain.
+$request = \Illuminate\Http\Request::create(
+    uri: '/ECommManagement/dashboard',
+    method: 'GET',
+    server: [
+        'REQUEST_METHOD' => 'GET',
+        'HTTP_HOST' => 'localhost',
+        'SERVER_NAME' => 'localhost',
+        'SERVER_PORT' => '80',
+        'REQUEST_URI' => '/ECommManagement/dashboard',
+        'SCRIPT_NAME' => '/ECommManagement/public/index.php',
+        'SCRIPT_FILENAME' => __DIR__.'/public/index.php',
+        'QUERY_STRING' => '',
+    ],
+);
+app()->instance('request', $request);
+\Illuminate\Support\Facades\URL::setRequest($request);
+
+echo 'request root: '.request()->root().PHP_EOL;
+echo 'request baseUrl: '.request()->getBaseUrl().PHP_EOL;
+echo 'request pathInfo: '.request()->getPathInfo().PHP_EOL;
+echo 'url(dashboard)   = '.url('dashboard').PHP_EOL;
+echo 'route(dashboard) = '.route('dashboard').PHP_EOL;
+echo 'asset(css/app.css)= '.asset('css/app.css').PHP_EOL;

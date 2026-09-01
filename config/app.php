@@ -123,4 +123,20 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Currency
+    |--------------------------------------------------------------------------
+    |
+    | The currency symbol shown next to money values (e.g. "₨") and the
+    | ISO 4217 currency code stored on money columns (e.g. "PKR"). Both
+    | are exposed via the currency_symbol() and currency_code() helpers
+    | so every view and controller can render amounts the same way.
+    |
+    */
+
+    'currency_symbol' => env('APP_CURRENCY_SYMBOL', '₨'),
+
+    'currency_code' => env('APP_CURRENCY_CODE', 'PKR'),
+
 ];

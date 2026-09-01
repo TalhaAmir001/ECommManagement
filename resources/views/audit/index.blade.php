@@ -10,10 +10,8 @@
         $isPositive = $totals['profit'] >= 0;
         $isEmpty = $totals['orders'] === 0;
 
-        $money = fn (float $v) => '$' . number_format($v, 2);
-        $compactMoney = fn (float $v) => $v >= 1000
-            ? '$' . number_format($v / 1000, $v >= 10000 ? 0 : 1) . 'k'
-            : '$' . number_format($v, 0);
+        $money = fn (float $v) => format_money($v, 2);
+        $compactMoney = fn (float $v) => compact_money($v);
 
         $presetLink = fn (string $key) => route('audit.index', ['preset' => $key]);
         $categoryMax = $byCategory ? max(array_column($byCategory, 'revenue')) : 0;
@@ -100,11 +98,11 @@
                     {{ $money($totals['profit']) }}
                 </p>
                 <p class="mt-2 text-xs text-muted">
-                    Revenue {{ $money($totals['revenue']) }} − COGS {{ $money($totals['cogs']) }}
+                    Gross {{ $money($totals['gross_profit'] ?? 0) }} − expenses {{ $money($totals['journal_expense'] ?? 0) }} + other income {{ $money($totals['journal_income'] ?? 0) }}
                 </p>
             </div>
 
-            <x-dashboard.stat-card label="Revenue" :value="$totals['revenue']" format="currency" :delta="0" :spark="[]" icon="dollar-sign" />
+            <x-dashboard.stat-card label="Revenue" :value="$totals['revenue']" format="currency" :delta="0" :spark="[]" icon="trending-up" />
             <x-dashboard.stat-card label="Cost of Goods" :value="$totals['cogs']" format="currency" :delta="0" :spark="[]" icon="receipt" />
             <x-dashboard.stat-card label="Profit Margin" :value="$totals['margin']" format="number" :delta="0" :spark="[]" icon="trending-up" />
         </div>
@@ -126,6 +124,82 @@
                 <p class="mt-3 text-2xl font-semibold tracking-tight text-ink tabular-nums">{{ $money($totals['avg_profit_per_order']) }}</p>
                 <p class="mt-1 text-xs text-muted">Net profit divided by successful orders.</p>
             </div>
+        </div>
+
+        {{-- Operating adjustments (journal entries) --}}
+        <div class="mt-6 rounded-2xl border border-line bg-surface shadow-sm shadow-ink/[0.02]">
+            <div class="flex flex-col gap-1 border-b border-line p-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <div>
+                    <h2 class="text-sm font-semibold text-ink">Operating adjustments</h2>
+                    <p class="mt-0.5 text-xs text-muted">Manual expenses and other income recorded as journal entries inside this period.</p>
+                </div>
+                <a href="{{ route('journal.index', ['date' => $range['preset'] === 'custom' ? null : ($range['preset'] === 'all' ? null : $range['preset'])]) }}"
+                    class="inline-flex items-center gap-1 text-xs font-medium text-ink hover:text-accent">
+                    Manage entries
+                    <x-dashboard.icon name="arrow-up-right" class="h-3.5 w-3.5" />
+                </a>
+            </div>
+
+            <div class="grid grid-cols-1 gap-px bg-line sm:grid-cols-3">
+                <div class="bg-surface p-5">
+                    <p class="text-sm font-medium text-muted">Gross profit</p>
+                    <p class="mt-3 text-2xl font-semibold tracking-tight text-ink tabular-nums">{{ $money($totals['gross_profit'] ?? 0) }}</p>
+                    <p class="mt-1 text-xs text-muted">Revenue minus COGS.</p>
+                </div>
+                <div class="bg-surface p-5">
+                    <p class="text-sm font-medium text-muted">Manual expenses</p>
+                    <p class="mt-3 text-2xl font-semibold tracking-tight text-negative tabular-nums">−{{ $money($totals['journal_expense'] ?? 0) }}</p>
+                    <p class="mt-1 text-xs text-muted">Sum of posted expense journal entries.</p>
+                </div>
+                <div class="bg-surface p-5">
+                    <p class="text-sm font-medium text-muted">Other income</p>
+                    <p class="mt-3 text-2xl font-semibold tracking-tight text-positive tabular-nums">+{{ $money($totals['journal_income'] ?? 0) }}</p>
+                    <p class="mt-1 text-xs text-muted">Non-Shopify income (refunds recovered, etc.).</p>
+                </div>
+            </div>
+
+            @if (! empty($journalByCategory))
+                <div class="overflow-x-auto border-t border-line">
+                    <table class="w-full min-w-[520px] text-left text-sm">
+                        <thead>
+                            <tr class="border-b border-line text-[11px] font-medium uppercase tracking-[0.1em] text-faint">
+                                <th class="py-3 pl-5 pr-4 font-medium">Category</th>
+                                <th class="py-3 pr-4 font-medium">Account</th>
+                                <th class="py-3 pr-4 text-right font-medium">Effect</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-line">
+                            @foreach ($journalByCategory as $row)
+                                <tr class="group transition-colors hover:bg-canvas/60">
+                                    <td class="py-3.5 pl-5 pr-4">
+                                        <div class="flex items-center gap-2">
+                                            <span class="h-2 w-2 shrink-0 rounded-full" style="background-color: {{ $row['color'] ?? '#1b1b18' }}"></span>
+                                            <p class="font-medium text-ink">{{ $row['name'] }}</p>
+                                            <span class="inline-flex items-center rounded-full border border-line bg-canvas px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted">
+                                                {{ $row['type'] }}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="py-3.5 pr-4 text-muted">{{ $row['account'] }}</td>
+                                    <td class="py-3.5 pr-4 text-right tabular-nums font-semibold {{ $row['signed'] >= 0 ? 'text-positive' : 'text-negative' }}">
+                                        {{ $row['signed'] >= 0 ? '+' : '−' }}{{ $money(abs($row['signed'])) }}
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @else
+                <div class="border-t border-line px-5 py-10 text-center">
+                    <p class="text-sm font-medium text-ink">No operating adjustments yet</p>
+                    <p class="mt-1 text-xs text-muted">Record shipping, marketing, rent or other entries to see how they shape net profit.</p>
+                    <a href="{{ route('journal.create') }}"
+                        class="mt-4 inline-flex items-center gap-2 rounded-lg bg-ink px-3.5 py-2 text-sm font-medium text-surface transition-colors hover:bg-ink/90">
+                        <x-dashboard.icon name="plus" class="h-4 w-4" />
+                        New entry
+                    </a>
+                </div>
+            @endif
         </div>
 
         {{-- Profit by category --}}
@@ -303,7 +377,7 @@
                     <div class="absolute inset-y-0 left-5 flex w-11 flex-col justify-between py-7 text-right">
                         <span class="text-[11px] tabular-nums text-faint">{{ $compactMoney($niceMax) }}</span>
                         <span class="text-[11px] tabular-nums text-faint">{{ $compactMoney($niceMax / 2) }}</span>
-                        <span class="text-[11px] tabular-nums text-faint">$0</span>
+                        <span class="text-[11px] tabular-nums text-faint">{{ currency_symbol() }}0</span>
                     </div>
                     <div class="pl-11">
                         <svg viewBox="0 0 {{ $w }} {{ $h }}" preserveAspectRatio="none" class="h-52 w-full" aria-hidden="true">
@@ -335,13 +409,14 @@
                 </div>
             @else
                 <div class="overflow-x-auto border-t border-line">
-                    <table class="w-full min-w-[560px] text-left text-sm">
+                    <table class="w-full min-w-[680px] text-left text-sm">
                         <thead>
                             <tr class="border-b border-line text-[11px] font-medium uppercase tracking-[0.1em] text-faint">
                                 <th class="py-3 pl-5 pr-4 font-medium">Month</th>
                                 <th class="py-3 pr-4 text-right font-medium">Orders</th>
                                 <th class="py-3 pr-4 text-right font-medium">Revenue</th>
                                 <th class="py-3 pr-4 text-right font-medium">COGS</th>
+                                <th class="py-3 pr-4 text-right font-medium">Journal Adj.</th>
                                 <th class="py-3 pr-4 text-right font-medium">Net Profit</th>
                                 <th class="py-3 pr-4 text-right font-medium">Margin</th>
                             </tr>
@@ -353,6 +428,9 @@
                                     <td class="py-3 pr-4 text-right tabular-nums text-muted">{{ number_format($row['orders']) }}</td>
                                     <td class="py-3 pr-4 text-right tabular-nums text-ink">{{ $money($row['revenue']) }}</td>
                                     <td class="py-3 pr-4 text-right tabular-nums text-muted">{{ $money($row['cogs']) }}</td>
+                                    <td class="py-3 pr-4 text-right tabular-nums {{ ($row['journal_net'] ?? 0) < 0 ? 'text-negative' : 'text-positive' }}">
+                                        {{ ($row['journal_net'] ?? 0) >= 0 ? '+' : '−' }}{{ $money(abs($row['journal_net'] ?? 0)) }}
+                                    </td>
                                     <td class="py-3 pr-4 text-right tabular-nums font-semibold {{ $row['profit'] >= 0 ? 'text-ink' : 'text-negative' }}">
                                         {{ $money($row['profit']) }}
                                     </td>
@@ -364,7 +442,7 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="6" class="px-5 py-10 text-center text-sm text-muted">No monthly data in this range.</td>
+                                    <td colspan="7" class="px-5 py-10 text-center text-sm text-muted">No monthly data in this range.</td>
                                 </tr>
                             @endforelse
                         </tbody>
@@ -386,7 +464,11 @@
                         not cancelled, voided or fully refunded.
                         <strong class="text-ink">Revenue</strong> is the sum of unit price × quantity across each order's line items.
                         <strong class="text-ink">COGS</strong> is the sum of product cost × quantity for those same items.
-                        <strong class="text-ink">Net profit</strong> = Revenue − COGS (gross margin; operating expenses are not deducted).
+                        <strong class="text-ink">Gross profit</strong> = Revenue − COGS.
+                        <strong class="text-ink">Journal entries</strong> (manual expenses and other income) recorded on the
+                        <a href="{{ route('journal.index') }}" class="text-ink underline-offset-2 hover:underline">Journal</a> page are
+                        posted as balanced double-entry lines and then folded in:
+                        <strong class="text-ink">Net profit</strong> = Gross profit − Manual expenses + Other income.
                     </p>
                 </div>
             </div>

@@ -22,3 +22,8 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Ad-hoc diagnostic scripts. Anything matching diag_*.php at the project
+# root or under /storage/ is a one-off tool, not part of the app.
+/diag_*.php
+/storage/diag_*.php

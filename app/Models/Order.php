@@ -24,6 +24,7 @@ class Order extends Model
         'status',
         'financial_status',
         'fulfillment_status',
+        'courier_provider_id',
         'total',
         'created_at',
         'shopify_id',
@@ -63,5 +64,14 @@ class Order extends Model
     public function shipments(): HasMany
     {
         return $this->hasMany(Shipment::class);
+    }
+
+    /**
+     * The courier this order is pre-assigned to ship via. Null when no
+     * specific courier has been chosen (e.g. waiting for a fulfillment).
+     */
+    public function assignedProvider(): BelongsTo
+    {
+        return $this->belongsTo(CourierProvider::class, 'courier_provider_id');
     }
 }

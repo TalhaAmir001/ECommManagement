@@ -3,8 +3,10 @@
 namespace App\Services\Courier;
 
 use App\Models\CourierProvider as CourierProviderModel;
+use App\Services\Courier\Providers\GenericHttpProvider;
 use App\Services\Courier\Providers\LeopardsProvider;
 use App\Services\Courier\Providers\ManualProvider;
+use App\Services\Courier\Providers\ShopifyFulfillmentProvider;
 use App\Services\Courier\Providers\TcsProvider;
 
 /**
@@ -25,6 +27,8 @@ class CourierProviderRegistry
             ManualProvider::class,
             LeopardsProvider::class,
             TcsProvider::class,
+            ShopifyFulfillmentProvider::class,
+            GenericHttpProvider::class,
         ];
     }
 
@@ -37,6 +41,8 @@ class CourierProviderRegistry
             ManualProvider::class => new ManualProvider($row),
             LeopardsProvider::class => new LeopardsProvider($row),
             TcsProvider::class => new TcsProvider($row),
+            ShopifyFulfillmentProvider::class => new ShopifyFulfillmentProvider($row),
+            GenericHttpProvider::class => new GenericHttpProvider($row),
             default => $this->resolveCustom($row),
         };
     }

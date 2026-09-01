@@ -16,3 +16,12 @@ Schedule::command('couriers:sync --queue')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)
     ->onOneServer();
+
+// Walk non-terminal Shopify-originated shipments and follow their tracking
+// URLs through the TrackingLinkResolver. This is what actually fetches a
+// delivery status from the courier — the `couriers:sync` loop only knows
+// about the structured API providers.
+Schedule::command('couriers:refresh-links --queue')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping(10)
+    ->onOneServer();

@@ -2,7 +2,7 @@
 
 @php
     $max = $data ? max($data) : 1;
-    $money = fn ($v) => $v >= 1000 ? '$' . number_format($v / 1000, 1) . 'k' : '$' . number_format($v, 0);
+    $money = fn ($v) => compact_money($v);
 @endphp
 
 <div class="space-y-4">

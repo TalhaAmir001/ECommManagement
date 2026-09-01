@@ -23,6 +23,13 @@ enum Capability: string
     case CodSupport = 'cod_support';
 
     /**
+     * The provider can resolve a delivery status by following a tracking URL
+     * (e.g. a courier's public tracking page). Distinct from ReadShipments
+     * because the source of truth is an HTML/JSON page, not a structured API.
+     */
+    case WebTracking = 'web_tracking';
+
+    /**
      * Human-readable label for the admin UI.
      */
     public function label(): string
@@ -36,6 +43,7 @@ enum Capability: string
             self::SchedulePickup => 'Schedule pickup',
             self::RateQuote => 'Get rate quotes',
             self::CodSupport => 'Cash on delivery',
+            self::WebTracking => 'Track via courier URL',
         };
     }
 }

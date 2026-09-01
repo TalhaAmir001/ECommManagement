@@ -6,7 +6,9 @@ use App\Models\Customer;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
+use App\Models\Shipment;
 use App\Services\Shopify\ShopifySync;
+use Database\Seeders\CourierProvidersSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -367,5 +369,374 @@ class ShopifySyncTest extends TestCase
             ->assertExitCode(0);
 
         $this->assertDatabaseMissing('products', ['sku' => 'OLD-1']);
+    }
+
+    public function test_it_ingests_fulfillments_with_tracking_into_shipments_table(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/300',
+                        'name' => '#2001',
+                        'createdAt' => '2026-08-01T10:00:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'FULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '50.00']],
+                        'customer' => [
+                            'id' => 'gid://shopify/Customer/1',
+                            'displayName' => 'Jane Doe',
+                            'email' => 'jane@example.com',
+                            'createdAt' => '2026-07-01T10:00:00Z',
+                            'defaultAddress' => ['country' => 'Pakistan'],
+                        ],
+                        'lineItems' => ['edges' => []],
+                        'fulfillments' => [
+                            [
+                                'id' => 'gid://shopify/Fulfillment/9001',
+                                'status' => 'SUCCESS',
+                                'displayStatus' => 'FULFILLED',
+                                'createdAt' => '2026-08-02T10:00:00Z',
+                                'updatedAt' => '2026-08-02T10:00:00Z',
+                                'deliveredAt' => null,
+                                'estimatedDeliveryAt' => null,
+                                'trackingInfo' => [
+                                    ['number' => 'LP123456789', 'company' => 'Leopards', 'url' => 'https://track.leopardscourier.com/?cn=LP123456789'],
+                                ],
+                                'originAddress' => [
+                                    'address1' => 'Warehouse 1',
+                                    'address2' => null,
+                                    'city' => 'Karachi',
+                                    'provinceCode' => null,
+                                    'zip' => '75000',
+                                    'countryCode' => 'PK',
+                                ],
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        $order = Order::query()->where('shopify_id', 'gid://shopify/Order/300')->firstOrFail();
+        $shipment = Shipment::query()->where('external_id', 'gid://shopify/Fulfillment/9001')->firstOrFail();
+
+        $this->assertSame($order->id, $shipment->order_id);
+        $this->assertSame('shopify', $shipment->matched_method);
+        $this->assertSame('LP123456789', $shipment->tracking_number);
+        $this->assertSame('Leopards', $shipment->carrier_name);
+        $this->assertSame('https://track.leopardscourier.com/?cn=LP123456789', $shipment->tracking_url);
+        $this->assertSame('in_transit', $shipment->status->value);
+        $this->assertSame(1, $shipment->events()->count(), 'an event should be recorded on ingest');
+        $this->assertSame('Warehouse 1', $shipment->consignor_address);
+        $this->assertSame('Karachi', $shipment->consignor_city);
+        $this->assertNull($shipment->consignor_name, 'FulfillmentOriginAddress has no name field');
+    }
+
+    public function test_it_marks_a_fulfillment_as_delivered_when_shopify_has_a_delivered_at(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/301',
+                        'name' => '#2002',
+                        'createdAt' => '2026-08-01T10:00:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'FULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '50.00']],
+                        'customer' => null,
+                        'lineItems' => ['edges' => []],
+                        'fulfillments' => [
+                            [
+                                'id' => 'gid://shopify/Fulfillment/9002',
+                                'status' => 'SUCCESS',
+                                'displayStatus' => 'DELIVERED',
+                                'createdAt' => '2026-08-02T10:00:00Z',
+                                'updatedAt' => '2026-08-04T10:00:00Z',
+                                'deliveredAt' => '2026-08-04T09:30:00Z',
+                                'estimatedDeliveryAt' => null,
+                                'trackingInfo' => [
+                                    ['number' => 'DLV-001', 'company' => 'DHL', 'url' => 'https://www.dhl.com/track?id=DLV-001'],
+                                ],
+                                'originAddress' => null,
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        $shipment = Shipment::query()->where('external_id', 'gid://shopify/Fulfillment/9002')->firstOrFail();
+        $this->assertSame('delivered', $shipment->status->value);
+        $this->assertNotNull($shipment->delivered_at);
+        $this->assertSame('DHL', $shipment->carrier_name);
+    }
+
+    public function test_fulfillments_without_tracking_numbers_are_skipped(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/302',
+                        'name' => '#2003',
+                        'createdAt' => '2026-08-01T10:00:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'UNFULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '0']],
+                        'customer' => null,
+                        'lineItems' => ['edges' => []],
+                        'fulfillments' => [
+                            [
+                                'id' => 'gid://shopify/Fulfillment/9003',
+                                'status' => 'OPEN',
+                                'displayStatus' => null,
+                                'createdAt' => '2026-08-02T10:00:00Z',
+                                'updatedAt' => '2026-08-02T10:00:00Z',
+                                'deliveredAt' => null,
+                                'estimatedDeliveryAt' => null,
+                                'trackingInfo' => [['number' => null, 'company' => null, 'url' => null]],
+                                'originAddress' => null,
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        $this->assertSame(0, Shipment::query()->count());
+    }
+
+    public function test_resyncing_the_same_fulfillment_does_not_duplicate_the_shipment(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $fulfillment = [
+            'id' => 'gid://shopify/Fulfillment/9004',
+            'status' => 'SUCCESS',
+            'displayStatus' => 'IN_TRANSIT',
+            'createdAt' => '2026-08-02T10:00:00Z',
+            'updatedAt' => '2026-08-02T10:00:00Z',
+            'deliveredAt' => null,
+            'estimatedDeliveryAt' => null,
+            'trackingInfo' => [['number' => 'RE-001', 'company' => 'TCS', 'url' => 'https://tcs.example/RE-001']],
+            'originAddress' => null,
+        ];
+
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/304',
+                        'name' => '#2004',
+                        'createdAt' => '2026-08-01T10:00:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'FULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '0']],
+                        'customer' => null,
+                        'lineItems' => ['edges' => []],
+                        'fulfillments' => [$fulfillment],
+                    ]],
+                ],
+            ],
+        ]);
+
+        $sync = app(ShopifySync::class);
+        $sync->syncOrders();
+        $sync->syncOrders();
+
+        $this->assertSame(1, Shipment::query()->count());
+    }
+
+    public function test_fulfillment_tracking_update_overrides_the_local_status_on_resync(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $make = function (string $displayStatus, ?string $deliveredAt): array {
+            return [
+                'orders' => [
+                    'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                    'edges' => [
+                        ['node' => [
+                            'id' => 'gid://shopify/Order/305',
+                            'name' => '#2005',
+                            'createdAt' => '2026-08-01T10:00:00Z',
+                            'displayFinancialStatus' => 'PAID',
+                            'displayFulfillmentStatus' => 'FULFILLED',
+                            'totalPriceSet' => ['shopMoney' => ['amount' => '0']],
+                            'customer' => null,
+                            'lineItems' => ['edges' => []],
+                            'fulfillments' => [
+                                [
+                                    'id' => 'gid://shopify/Fulfillment/9005',
+                                    'status' => 'SUCCESS',
+                                    'displayStatus' => $displayStatus,
+                                    'createdAt' => '2026-08-02T10:00:00Z',
+                                    'updatedAt' => '2026-08-02T10:00:00Z',
+                                    'deliveredAt' => $deliveredAt,
+                                    'estimatedDeliveryAt' => null,
+                                    'trackingInfo' => [['number' => 'UP-001', 'company' => 'TCS', 'url' => null]],
+                                    'originAddress' => null,
+                                ],
+                            ],
+                        ]],
+                    ],
+                ],
+            ];
+        };
+
+        Http::fake([
+            'https://test-store.myshopify.com/admin/oauth/access_token' => Http::response([
+                'access_token' => 'shpat_test',
+                'expires_in' => 86399,
+            ]),
+            'https://test-store.myshopify.com/admin/api/2026-07/graphql.json' => Http::sequence()
+                ->push(['data' => $make('IN_TRANSIT', null)])
+                ->push(['data' => $make('DELIVERED', '2026-08-04T09:00:00Z')]),
+        ]);
+
+        $sync = app(ShopifySync::class);
+        $sync->syncOrders();
+        $shipment = Shipment::query()->firstOrFail();
+        $this->assertSame('in_transit', $shipment->status->value);
+
+        $sync->syncOrders();
+        $shipment->refresh();
+        $this->assertSame('delivered', $shipment->status->value);
+        $this->assertNotNull($shipment->delivered_at);
+    }
+
+    public function test_the_orders_query_uses_the_plain_fulfillments_list_shape(): void
+    {
+        $this->fakeShopify([
+            'orders' => ['pageInfo' => ['hasNextPage' => false, 'endCursor' => null], 'edges' => []],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        // This guards the exact regression that broke the live sync: the query
+        // must treat Order.fulfillments as a plain list ([Fulfillment!]!), not
+        // a connection, and must not request FulfillmentOriginAddress.name.
+        Http::assertSent(function ($request) {
+            if ($request->url() !== 'https://test-store.myshopify.com/admin/api/2026-07/graphql.json') {
+                return false;
+            }
+
+            $query = (string) $request['query'];
+
+            return str_contains($query, 'fragment OrderFields on Order')
+                && str_contains($query, 'fulfillments(first: 50)')
+                && str_contains($query, 'trackingInfo(first: 10)')
+                && preg_match('/fulfillments\([^)]*\)\s*\{\s*edges/', $query) !== 1
+                && preg_match('/originAddress\s*\{\s*name/', $query) !== 1;
+        });
+    }
+
+    public function test_it_uses_the_first_tracking_entry_when_a_fulfillment_has_multiple_packages(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/306',
+                        'name' => '#2006',
+                        'createdAt' => '2026-08-01T10:00:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'FULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '0']],
+                        'customer' => null,
+                        'lineItems' => ['edges' => []],
+                        'fulfillments' => [
+                            [
+                                'id' => 'gid://shopify/Fulfillment/9006',
+                                'status' => 'SUCCESS',
+                                'displayStatus' => 'IN_TRANSIT',
+                                'createdAt' => '2026-08-02T10:00:00Z',
+                                'updatedAt' => '2026-08-02T10:00:00Z',
+                                'deliveredAt' => null,
+                                'estimatedDeliveryAt' => null,
+                                'trackingInfo' => [
+                                    ['number' => 'PKG-01', 'company' => 'TCS', 'url' => 'https://tcs.example/PKG-01'],
+                                    ['number' => 'PKG-02', 'company' => 'TCS', 'url' => 'https://tcs.example/PKG-02'],
+                                ],
+                                'originAddress' => null,
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        $shipment = Shipment::query()->where('external_id', 'gid://shopify/Fulfillment/9006')->firstOrFail();
+        $this->assertSame('PKG-01', $shipment->tracking_number);
+        $this->assertSame(1, Shipment::query()->count());
+    }
+
+    public function test_it_still_accepts_legacy_connection_shaped_fulfillments(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/307',
+                        'name' => '#2007',
+                        'createdAt' => '2026-08-01T10:00:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'FULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '0']],
+                        'customer' => null,
+                        'lineItems' => ['edges' => []],
+                        // Old connection shape with a single-map trackingInfo,
+                        // e.g. payloads produced by queued webhook jobs that
+                        // started before this fix was deployed.
+                        'fulfillments' => [
+                            'edges' => [
+                                ['node' => [
+                                    'id' => 'gid://shopify/Fulfillment/9007',
+                                    'status' => 'SUCCESS',
+                                    'displayStatus' => 'IN_TRANSIT',
+                                    'createdAt' => '2026-08-02T10:00:00Z',
+                                    'updatedAt' => '2026-08-02T10:00:00Z',
+                                    'deliveredAt' => null,
+                                    'estimatedDeliveryAt' => null,
+                                    'trackingInfo' => ['number' => 'LEG-001', 'company' => 'TCS', 'url' => null],
+                                    'originAddress' => null,
+                                ]],
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        $shipment = Shipment::query()->where('external_id', 'gid://shopify/Fulfillment/9007')->firstOrFail();
+        $this->assertSame('LEG-001', $shipment->tracking_number);
     }
 }

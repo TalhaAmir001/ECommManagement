@@ -2,10 +2,15 @@
 
 namespace App\Services\Shopify;
 
+use App\Models\CourierProvider;
 use App\Models\Customer;
 use App\Models\Order;
 use App\Models\Product;
+use App\Services\Courier\Exceptions\CourierException;
+use App\Services\Courier\Providers\ShopifyFulfillmentProvider;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ShopifySync
 {
@@ -14,9 +19,7 @@ class ShopifySync
      */
     public const PAGE_SIZE = 250;
 
-    public function __construct(private readonly ShopifyClient $client)
-    {
-    }
+    public function __construct(private readonly ShopifyClient $client) {}
 
     /**
      * Sync products, customers and orders from Shopify into the local database.
@@ -152,51 +155,22 @@ class ShopifySync
                 $variables['after'] = $after;
             }
 
-            $data = $this->client->graphql(<<<'GRAPHQL'
+            $data = $this->client->graphql(
+                <<<'GRAPHQL'
                 query ShopifyOrders($first: Int!, $after: String) {
                     orders(first: $first, after: $after) {
                         pageInfo { hasNextPage endCursor }
                         edges {
                             node {
-                                id
-                                name
-                                createdAt
-                                displayFinancialStatus
-                                displayFulfillmentStatus
-                                totalPriceSet {
-                                    shopMoney { amount }
-                                }
-                                customer {
-                                    id
-                                    displayName
-                                    email
-                                    createdAt
-                                    defaultAddress { country }
-                                }
-                                lineItems(first: 250) {
-                                    edges {
-                                        node {
-                                            id
-                                            quantity
-                                            title
-                                            originalUnitPriceSet {
-                                                shopMoney { amount }
-                                            }
-                                            variant {
-                                                id
-                                                sku
-                                                title
-                                                price
-                                                product { id title productType }
-                                            }
-                                        }
-                                    }
-                                }
+                                ...OrderFields
                             }
                         }
                     }
                 }
-                GRAPHQL, $variables);
+                GRAPHQL
+                .ShopifyQueries::ORDER_FIELDS,
+                $variables
+            );
 
             foreach ($data['orders']['edges'] ?? [] as $edge) {
                 $this->upsertOrder($edge['node']);
@@ -296,7 +270,7 @@ class ShopifySync
     }
 
     /**
-     * Upsert a Shopify order along with its line items.
+     * Upsert a Shopify order along with its line items and fulfillments.
      */
     public function upsertOrder(array $order): void
     {
@@ -350,7 +324,172 @@ class ShopifySync
                     'unit_price' => (float) $unitPrice,
                 ]);
             }
+
+            // Pull the customer's default address into the local customer so
+            // the fulfillment consignee fields aren't blank.
+            $this->hydrateCustomerAddress($customerId, $order['customer']['defaultAddress'] ?? null);
+
+            // Ingest fulfillments as shipments. Done inside the same
+            // transaction so a sync that partially fails rolls back cleanly.
+            $this->ingestFulfillments($localOrder, $order);
         });
+    }
+
+    /**
+     * Mirror a Shopify customer's default address onto the local customer
+     * row. We only update fields the fulfillment page needs (name, country)
+     * and we never clobber an already-populated phone.
+     */
+    private function hydrateCustomerAddress(?int $customerId, ?array $address): void
+    {
+        if ($customerId === null || empty($address)) {
+            return;
+        }
+
+        $customer = Customer::query()->find($customerId);
+        if ($customer === null) {
+            return;
+        }
+
+        $updates = [];
+        if (empty($customer->country) || $customer->country === 'Unknown') {
+            $updates['country'] = $address['country'] ?? $customer->country;
+        }
+        if (! empty($address['phone']) && empty($customer->phone)) {
+            $updates['phone'] = $address['phone'];
+        }
+        if ($updates !== []) {
+            $customer->forceFill($updates)->save();
+        }
+    }
+
+    /**
+     * Ingest the fulfillments attached to a Shopify order as local shipments
+     * under the "shopify" provider. Idempotent on (courier_provider_id,
+     * external_id) so re-syncs update rather than duplicate.
+     */
+    private function ingestFulfillments(Order $localOrder, array $order): void
+    {
+        $provider = CourierProvider::query()->where('key', 'shopify')->first();
+        if ($provider === null) {
+            // No shopify provider configured (shouldn't happen since the
+            // seeder runs, but guard anyway).
+            return;
+        }
+
+        $ingestor = new ShopifyFulfillmentProvider($provider);
+
+        // Use the order's customer default address as the consignee since
+        // fulfillments on a regular order ship there.
+        $customer = $localOrder->customer;
+        $consignee = $customer ? [
+            'name' => $customer->name,
+            'phone' => $customer->phone,
+            'address1' => null,
+            'address2' => null,
+            'city' => null,
+        ] : null;
+
+        foreach ($this->fulfillmentsFrom($order) as $fulfillment) {
+            $tracking = $this->firstTrackingInfo($fulfillment['trackingInfo'] ?? null);
+            $trackingNumber = $tracking['number'] ?? null;
+
+            if ($trackingNumber === null || $trackingNumber === '') {
+                continue;
+            }
+
+            try {
+                $ingestor->ingestFulfillment(
+                    orderId: $localOrder->id,
+                    externalId: $fulfillment['id'] ?? ('shopify:'.bin2hex(random_bytes(6))),
+                    trackingNumber: $trackingNumber,
+                    carrierName: $tracking['company'] ?? null,
+                    trackingUrl: $tracking['url'] ?? null,
+                    displayStatus: $fulfillment['displayStatus'] ?? $fulfillment['status'] ?? null,
+                    createdAt: $this->parseDate($fulfillment['createdAt'] ?? null),
+                    deliveredAt: $this->parseDate($fulfillment['deliveredAt'] ?? null),
+                    originAddress: is_array($fulfillment['originAddress'] ?? null) ? $fulfillment['originAddress'] : null,
+                    destinationAddress: $consignee,
+                    raw: $fulfillment,
+                );
+            } catch (CourierException $e) {
+                // Skip this fulfillment but keep syncing the rest. We log
+                // so a future admin can investigate.
+                Log::warning('Skipped Shopify fulfillment ingest', [
+                    'order' => $localOrder->number,
+                    'fulfillment' => $fulfillment['id'] ?? null,
+                    'reason' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Normalize an order's fulfillments into a plain list of fulfillment
+     * arrays. The Admin GraphQL API returns fulfillments as a plain list
+     * (fulfillments(first: 50) → [Fulfillment!]!), but webhook jobs may still
+     * be running against older payloads that used the connection shape, so
+     * both forms are accepted here.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function fulfillmentsFrom(array $order): array
+    {
+        $fulfillments = $order['fulfillments'] ?? [];
+
+        // Real API shape: a list of fulfillment objects.
+        if (array_is_list($fulfillments)) {
+            return array_values(array_filter($fulfillments, 'is_array'));
+        }
+
+        // Legacy connection shape (edges/node) for backward compatibility.
+        if (is_array($fulfillments['edges'] ?? null)) {
+            return array_values(array_filter(
+                array_map(static fn ($edge) => $edge['node'] ?? null, $fulfillments['edges']),
+                'is_array',
+            ));
+        }
+
+        return [];
+    }
+
+    /**
+     * Return the first tracking entry for a fulfillment. Shopify exposes
+     * trackingInfo as a list ([FulfillmentTrackingInfo!]!) because a single
+     * fulfillment can span multiple packages; the local shipments table keys
+     * on the fulfillment id, so only the first package is mirrored.
+     *
+     * @return array<string, mixed>
+     */
+    private function firstTrackingInfo(mixed $trackingInfo): array
+    {
+        if (is_array($trackingInfo) && isset($trackingInfo['number'])) {
+            // Single tracking map (legacy shape).
+            return $trackingInfo;
+        }
+
+        $tracking = is_array($trackingInfo) ? $trackingInfo : [];
+
+        foreach ($tracking as $entry) {
+            if (is_array($entry)) {
+                return $entry;
+            }
+        }
+
+        return [];
+    }
+
+    private function parseDate(mixed $value): ?Carbon
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse((string) $value);
+        } catch (\Exception) {
+            return null;
+        }
     }
 
     /**

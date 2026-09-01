@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             CourierProvidersSeeder::class,
+            JournalAccountsSeeder::class,
         ]);
 
         $customers = Customer::factory(24)->create();

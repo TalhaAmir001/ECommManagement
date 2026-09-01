@@ -1,0 +1,36 @@
+# Routes every request to the public/ front controller so the app can be
+# served from the project root (e.g. http://localhost/ECommManagement/)
+# instead of http://localhost/ECommManagement/public/. This is the standard
+# Laravel pattern for shared hosting / XAMPP where the Apache DocumentRoot
+# can't be changed to point at public/ directly.
+#
+# How it works:
+#   - If the request already points inside public/ (someone hit the old
+#     URL), let it pass through so we don't double-rewrite.
+#   - Otherwise, internally rewrite every URL to public/<same-path>. From
+#     there, public/.htaccess takes over: real files in public/ (css, js,
+#     images, etc.) are served as-is, and everything else is forwarded to
+#     public/index.php (Laravel's front controller).
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Don't rewrite if the request already targets /public/ — otherwise the
+    # rewrite would loop forever.
+    RewriteCond %{REQUEST_URI} !^public/
+
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Block direct access to the application source so files like .env,
+# composer.json, or artisan can't be fetched over HTTP. These would be
+# served if the root .htaccess above didn't already forward unknown URLs
+# into public/index.php, but this is a belt-and-suspenders line in case
+# mod_rewrite is ever disabled.
+<FilesMatch "(^\.env|^\.env\..*|composer\.(json|lock)$|artisan$|package\.(json|lock)$|\.git.*)">
+    Require all denied
+</FilesMatch>
+
+# Optional: turn off directory listing globally (XAMPP ships with this off,
+# but cheap insurance against a future misconfiguration).
+Options -Indexes

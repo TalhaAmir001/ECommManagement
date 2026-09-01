@@ -2,9 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\Courier\ShipmentStatus;
+use App\Models\CourierProvider as CourierProviderModel;
 use App\Models\Order;
+use App\Models\Shipment;
+use App\Models\ShipmentEvent;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\View\View;
@@ -45,10 +50,15 @@ class OrderController extends Controller
         $query = Order::query()
             ->with('customer')
             ->withCount('items')
+            ->withCount('shipments')
             // Most recent shipment per order, used to render the tracking cell.
-            ->with(['shipments' => function ($q) {
-                $q->orderByDesc('last_event_at')->orderByDesc('id')->limit(1);
-            }, 'shipments.provider']);
+            ->with([
+                'assignedProvider',
+                'shipments' => function ($q) {
+                    $q->orderByDesc('last_event_at')->orderByDesc('id')->limit(1);
+                },
+                'shipments.provider',
+            ]);
 
         $this->applyFilters($query, $request);
         $this->applySorting($query, $request);
@@ -63,6 +73,10 @@ class OrderController extends Controller
             'filters' => $request->query(),
             'paymentStatuses' => self::PAYMENT_STATUSES,
             'fulfillmentStatuses' => self::FULFILLMENT_STATUSES,
+            'allProviders' => CourierProviderModel::query()
+                ->where('enabled', true)
+                ->orderBy('display_name')
+                ->get(['id', 'display_name']),
         ]);
     }
 
@@ -111,11 +125,15 @@ class OrderController extends Controller
             ->get();
 
         $rows = [];
+        $providersForRows = CourierProviderModel::query()
+            ->where('enabled', true)
+            ->orderBy('display_name')
+            ->get(['id', 'display_name']);
         foreach ($orders as $order) {
             $rows[] = [
                 'id' => $order->id,
                 'shopify_id' => $order->shopify_id,
-                'html' => view('orders._row', ['order' => $order])->render(),
+                'html' => view('orders._row', ['order' => $order, 'allProviders' => $providersForRows])->render(),
             ];
         }
 
@@ -125,6 +143,84 @@ class OrderController extends Controller
             'rows' => $rows,
             'latest_updated_at' => $latestUpdatedAt?->toIso8601String(),
         ]);
+    }
+
+    /**
+     * "Add tracking number" quick action. The operator types a tracking
+     * number on an order and we create a Manual shipment pre-linked to
+     * that order. The shipment is marked `matched_method = manual` so
+     * the auto-matcher never silently overrides the link.
+     *
+     * The order comes from the route binding (Laravel's implicit
+     * model binding), not the form body, so a tampered or stale body
+     * can't make the shipment link to a different order than the row
+     * it was submitted from.
+     */
+    public function addTrackingNumber(Request $request, Order $order): RedirectResponse
+    {
+        $data = $request->validate([
+            'tracking_number' => ['required', 'string', 'max:128'],
+            'carrier_name' => ['nullable', 'string', 'max:64'],
+        ]);
+
+        $manual = CourierProviderModel::query()->where('key', 'manual')->firstOrFail();
+
+        $shipment = Shipment::query()->create([
+            'courier_provider_id' => $manual->id,
+            'external_id' => 'MANUAL-'.strtoupper(bin2hex(random_bytes(4))),
+            'tracking_number' => $data['tracking_number'],
+            'carrier_name' => $data['carrier_name'] ?? null,
+            'reference' => $order->number,
+            'order_id' => $order->id,
+            'matched_method' => 'manual',
+            'matched_at' => now(),
+            'status' => ShipmentStatus::Created->value,
+            'currency' => config('couriers.default_currency', 'PKR'),
+            'shipped_at' => now(),
+            'last_event_at' => now(),
+        ]);
+
+        ShipmentEvent::query()->create([
+            'shipment_id' => $shipment->id,
+            'occurred_at' => now(),
+            'status' => $shipment->status,
+            'description' => 'Tracking number added from order '.$order->number,
+        ]);
+
+        return redirect()->route('shipments.show', $shipment)
+            ->with('status', 'Tracking number added to order '.$order->number.'.');
+    }
+
+    /**
+     * Assign (or clear) a courier provider on an order. This is the
+     * "early binding" — the order is pre-declared to ship via Leopards
+     * (or whoever) before the actual tracking number exists.
+     *
+     * Setting provider_id = 0 is the explicit "clear" action so the
+     * operator doesn't have to wrestle with multi-select placeholders.
+     */
+    public function assignProvider(Request $request, Order $order): RedirectResponse
+    {
+        $data = $request->validate([
+            'courier_provider_id' => ['required', 'integer'],
+        ]);
+
+        $newId = (int) $data['courier_provider_id'];
+
+        if ($newId === 0) {
+            $order->forceFill(['courier_provider_id' => null])->save();
+
+            return back()->with('status', 'Cleared the assigned courier on order '.$order->number.'.');
+        }
+
+        $exists = CourierProviderModel::query()->whereKey($newId)->exists();
+        if (! $exists) {
+            return back()->withErrors(['courier_provider_id' => 'That courier provider does not exist.']);
+        }
+
+        $order->forceFill(['courier_provider_id' => $newId])->save();
+
+        return back()->with('status', 'Assigned courier on order '.$order->number.'.');
     }
 
     /**

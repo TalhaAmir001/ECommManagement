@@ -146,15 +146,63 @@
                     <h2 class="text-sm font-semibold text-ink">New manual shipment</h2>
                     <a href="{{ route('shipments.index', $filters) }}" class="text-xs text-muted transition-colors hover:text-ink">Cancel</a>
                 </div>
-                <form method="POST" action="{{ route('shipments.store') }}" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <form method="POST" action="{{ route('shipments.store') }}" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" data-shipment-form>
                     @csrf
+                    {{-- Order picker (hidden id + visible typeahead). The
+                         typeahead is filled from /shipments/lookup-orders as
+                         the operator types. The form submits the id, not a
+                         free-text number, so a typo can't link to the wrong
+                         order. Results are grouped as "Linked" (already has
+                         a shipment) and "Unlinked" (still needs one). --}}
+                    <div class="sm:col-span-2 lg:col-span-3"
+                        data-order-picker
+                        data-lookup-url="{{ route('shipments.lookup-orders') }}">
+                        <label class="mb-1.5 block text-xs font-medium text-muted">Link to order (optional)</label>
+                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                            <div>
+                                <input type="hidden" name="order_id" value="{{ old('order_id') }}" data-order-picker-id />
+                                <input
+                                    type="text"
+                                    name="order_search"
+                                    value="{{ old('order_number') }}"
+                                    placeholder="Search by order #, customer name, phone or email…"
+                                    autocomplete="off"
+                                    data-order-picker-input
+                                    class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                            </div>
+                            <div class="sm:col-span-2 rounded-lg border border-line bg-canvas px-3 py-2 text-xs text-muted" data-order-picker-summary>
+                                {{-- The chosen order's number, customer and
+                                     total land here once a suggestion is
+                                     picked. Server-side validation still
+                                     verifies the order exists. --}}
+                                <span class="text-faint">No order selected. Search above to pick one — results are grouped as <span class="font-semibold uppercase tracking-wider">Linked</span> or <span class="font-semibold uppercase tracking-wider">Unlinked</span>.</span>
+                            </div>
+                        </div>
+                        <ul class="mt-2 hidden divide-y divide-line rounded-lg border border-line bg-surface shadow-sm shadow-ink/[0.02]" data-order-picker-results role="listbox"></ul>
+                    </div>
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Tracking number</label>
-                        <input name="tracking_number" required class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                        <div class="flex gap-1.5">
+                            <input
+                                name="tracking_number"
+                                value="{{ old('tracking_number') }}"
+                                data-tracking-number-input
+                                placeholder="Leave blank to auto-generate"
+                                class="flex-1 rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                            <button
+                                type="button"
+                                data-generate-tracking-number
+                                data-generate-url="{{ route('shipments.generate-tracking-number') }}"
+                                class="inline-flex shrink-0 items-center gap-1 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-canvas"
+                                title="Generate a new tracking number">
+                                <x-dashboard.icon name="refresh" class="h-3.5 w-3.5" />
+                                Generate
+                            </button>
+                        </div>
                     </div>
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Reference (order #)</label>
-                        <input name="reference" class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                        <input name="reference" value="{{ old('reference') }}" data-order-picker-reference class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
                     </div>
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Initial status</label>
@@ -170,7 +218,7 @@
                     </div>
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Consignee phone</label>
-                        <input name="consignee_phone" class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                        <input name="consignee_phone" data-order-picker-phone class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
                     </div>
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Consignee city</label>
@@ -218,7 +266,7 @@
         {{-- Shipments table --}}
         <div class="mt-4 overflow-hidden rounded-2xl border border-line bg-surface shadow-sm shadow-ink/[0.02]">
             <div class="overflow-x-auto">
-                <table class="w-full min-w-[900px] text-left text-sm">
+                <table class="w-full min-w-[960px] text-left text-sm">
                     <thead>
                         <tr class="border-b border-line text-[11px] font-medium uppercase tracking-[0.1em] text-faint">
                             <th class="py-3.5 pl-5 pr-4 font-medium">Tracking</th>
@@ -227,16 +275,31 @@
                             <th class="py-3.5 pr-4 font-medium">Consignee</th>
                             <th class="py-3.5 pr-4 font-medium">Order</th>
                             <th class="py-3.5 pr-4 text-right font-medium">Last event</th>
+                            <th class="py-3.5 pr-4 text-right font-medium">Actions</th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-line">
+                    <tbody class="divide-y divide-line" data-shipments-table>
                         @forelse ($shipments as $shipment)
-                            <tr class="group transition-colors hover:bg-canvas/60">
+                            @php
+                                // Auto-reopen the picker if the previous
+                                // submission failed validation for this row.
+                                $reopenPicker = (string) old('shipment_id') === (string) $shipment->id;
+                                $isLinked = $shipment->order_id !== null;
+                            @endphp
+                            <tr class="group transition-colors hover:bg-canvas/60" data-shipment-row="{{ $shipment->id }}">
                                 <td class="py-3.5 pl-5 pr-4">
-                                    <a href="{{ route('shipments.show', $shipment) }}" class="font-semibold text-ink hover:text-accent">
-                                        {{ $shipment->tracking_number }}
-                                    </a>
-                                    @if ($shipment->reference)
+                                    @if ($shipment->tracking_url)
+                                        <a href="{{ $shipment->tracking_url }}" target="_blank" rel="noopener" class="font-semibold text-ink hover:text-accent">
+                                            {{ $shipment->tracking_number }}
+                                        </a>
+                                    @else
+                                        <a href="{{ route('shipments.show', $shipment) }}" class="font-semibold text-ink hover:text-accent">
+                                            {{ $shipment->tracking_number }}
+                                        </a>
+                                    @endif
+                                    @if ($shipment->carrier_name)
+                                        <p class="text-xs text-muted">{{ $shipment->carrier_name }}</p>
+                                    @elseif ($shipment->reference)
                                         <p class="text-xs text-muted">Ref {{ $shipment->reference }}</p>
                                     @endif
                                 </td>
@@ -261,16 +324,189 @@
                                             <p class="text-xs text-muted">via {{ $shipment->matched_method }}</p>
                                         @endif
                                     @else
-                                        <span class="text-xs text-muted">Unlinked</span>
+                                        <span class="inline-flex items-center gap-1 rounded-full border border-line bg-canvas px-2 py-0.5 text-xs font-medium text-muted">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-faint"></span>Unlinked
+                                        </span>
                                     @endif
                                 </td>
                                 <td class="py-3.5 pr-4 text-right tabular-nums text-muted">
                                     {{ $shipment->last_event_at?->diffForHumans() ?? '—' }}
                                 </td>
+                                <td class="py-3.5 pr-4">
+                                    <div class="flex flex-wrap items-center justify-end gap-1.5">
+                                        <button type="button"
+                                            data-toggle-picker="{{ $shipment->id }}"
+                                            data-picker-kind="status"
+                                            class="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-canvas"
+                                            title="Update shipment status">
+                                            <x-dashboard.icon name="trending-up" class="h-3 w-3" />
+                                            Status
+                                        </button>
+                                        @if ($isLinked)
+                                            <button type="button"
+                                                data-toggle-picker="{{ $shipment->id }}"
+                                                data-picker-kind="link"
+                                                class="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-canvas"
+                                                title="Switch to a different order">
+                                                <x-dashboard.icon name="link-2" class="h-3 w-3" />
+                                                Switch
+                                            </button>
+                                            <form method="POST" action="{{ route('shipments.unlink', $shipment) }}" data-unlink-form class="contents">
+                                                @csrf
+                                                <input type="hidden" name="return" value="index">
+                                                <button type="submit"
+                                                    onclick="return confirm('Unlink shipment {{ $shipment->tracking_number }} from order {{ $shipment->order->number }}?');"
+                                                    class="inline-flex items-center gap-1 rounded-md border border-negative/30 bg-surface px-2.5 py-1 text-xs font-medium text-negative transition-colors hover:bg-negative-soft"
+                                                    title="Unlink from the current order">
+                                                    <x-dashboard.icon name="unlink" class="h-3 w-3" />
+                                                    Unlink
+                                                </button>
+                                            </form>
+                                        @else
+                                            <button type="button"
+                                                data-toggle-picker="{{ $shipment->id }}"
+                                                data-picker-kind="link"
+                                                class="inline-flex items-center gap-1 rounded-md bg-ink px-2.5 py-1 text-xs font-medium text-surface transition-colors hover:bg-ink/90"
+                                                title="Link to an order">
+                                                <x-dashboard.icon name="link" class="h-3 w-3" />
+                                                Link
+                                            </button>
+                                        @endif
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr id="shipment-picker-link-{{ $shipment->id }}"
+                                data-picker-row="{{ $shipment->id }}"
+                                data-picker-kind="link"
+                                class="{{ $reopenPicker ? '' : 'hidden' }} bg-canvas/30">
+                                <td colspan="7" class="px-5 py-4">
+                                    <form method="POST"
+                                        action="{{ route('shipments.link', $shipment) }}"
+                                        data-link-form
+                                        data-shipment-link-form
+                                        class="space-y-3">
+                                        @csrf
+                                        <input type="hidden" name="return" value="index">
+                                        <input type="hidden" name="shipment_id" value="{{ $shipment->id }}">
+                                        @if ($isLinked)
+                                            <input type="hidden" name="confirm" value="1">
+                                        @endif
+
+                                        <div class="flex flex-wrap items-center justify-between gap-2">
+                                            <p class="text-xs font-medium text-muted">
+                                                {{ $isLinked ? 'Switch shipment ' . $shipment->tracking_number . ' to a different order' : 'Link shipment ' . $shipment->tracking_number . ' to an order' }}
+                                            </p>
+                                            <button type="button" data-cancel-picker="{{ $shipment->id }}" data-cancel-kind="link" class="text-xs font-medium text-muted transition-colors hover:text-ink">Cancel</button>
+                                        </div>
+
+                                        @error('order_id')
+                                            <p class="rounded-lg border border-negative/30 bg-negative-soft px-3 py-2 text-xs text-negative">{{ $message }}</p>
+                                        @enderror
+
+                                        <div data-order-picker
+                                            data-lookup-url="{{ route('shipments.lookup-orders') }}"
+                                            data-current-order-id="{{ $shipment->order_id ?? '' }}">
+                                            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                                <div class="sm:col-span-2">
+                                                    <input type="hidden" name="order_id" value="" data-order-picker-id />
+                                                    <input type="text"
+                                                        name="order_search"
+                                                        placeholder="Type order #, customer name, phone or email…"
+                                                        autocomplete="off"
+                                                        data-order-picker-input
+                                                        class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                                                </div>
+                                                <div class="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted" data-order-picker-summary>
+                                                    <span class="text-faint">
+                                                        @if ($isLinked)
+                                                            Currently linked to <span class="font-medium text-ink">{{ $shipment->order->number }}</span>. Pick an order above to switch.
+                                                        @else
+                                                            No order selected. Pick an order above to link.
+                                                        @endif
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <ul class="mt-2 hidden divide-y divide-line rounded-lg border border-line bg-surface shadow-sm shadow-ink/[0.02]" data-order-picker-results role="listbox"></ul>
+                                        </div>
+
+                                        <div class="flex items-center gap-2">
+                                            <button type="submit" class="inline-flex items-center gap-2 rounded-lg bg-ink px-3.5 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">
+                                                <x-dashboard.icon name="link" class="h-3.5 w-3.5" />
+                                                {{ $isLinked ? 'Switch order' : 'Link order' }}
+                                            </button>
+                                        </div>
+                                    </form>
+                                </td>
+                            </tr>
+                            <tr id="shipment-picker-status-{{ $shipment->id }}"
+                                data-picker-row="{{ $shipment->id }}"
+                                data-picker-kind="status"
+                                class="hidden bg-canvas/30">
+                                <td colspan="7" class="px-5 py-4">
+                                    <form method="POST"
+                                        action="{{ route('shipments.events.store', $shipment) }}"
+                                        data-status-form
+                                        class="space-y-3">
+                                        @csrf
+                                        <input type="hidden" name="return" value="index">
+
+                                        <div class="flex flex-wrap items-center justify-between gap-2">
+                                            <p class="text-xs font-medium text-muted">
+                                                Update status for {{ $shipment->tracking_number }}
+                                                <span class="ml-2 text-faint">— currently <x-dashboard.courier-status-pill :status="$shipment->status" /></span>
+                                            </p>
+                                            <button type="button" data-cancel-picker="{{ $shipment->id }}" data-cancel-kind="status" class="text-xs font-medium text-muted transition-colors hover:text-ink">Cancel</button>
+                                        </div>
+
+                                        @error('status')
+                                            <p class="rounded-lg border border-negative/30 bg-negative-soft px-3 py-2 text-xs text-negative">{{ $message }}</p>
+                                        @enderror
+
+                                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                            <div>
+                                                <label class="mb-1.5 block text-xs font-medium text-muted">New status</label>
+                                                <select name="status"
+                                                    data-status-picker-select
+                                                    required
+                                                    class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
+                                                    @foreach ($statuses as $status)
+                                                        <option value="{{ $status->value }}" @selected($status === $shipment->status)>{{ $status->label() }}</option>
+                                                    @endforeach
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label class="mb-1.5 block text-xs font-medium text-muted">Description <span class="text-faint">(optional)</span></label>
+                                                <input name="description"
+                                                    maxlength="255"
+                                                    placeholder="e.g. Picked up from warehouse"
+                                                    class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1.5 block text-xs font-medium text-muted">Location <span class="text-faint">(optional)</span></label>
+                                                <input name="location"
+                                                    maxlength="128"
+                                                    placeholder="e.g. Karachi hub"
+                                                    class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                                            </div>
+                                        </div>
+
+                                        <div class="flex flex-wrap items-center gap-3">
+                                            <button type="submit" class="inline-flex items-center gap-2 rounded-lg bg-ink px-3.5 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">
+                                                <x-dashboard.icon name="trending-up" class="h-3.5 w-3.5" />
+                                                Save status
+                                            </button>
+                                            @if ($shipment->provider->key !== 'manual')
+                                                <span class="text-xs text-muted">
+                                                    This shipment is synced from <span class="font-medium text-ink">{{ $shipment->provider->display_name }}</span>, so the actual status will be pulled from the courier API on the next refresh.
+                                                </span>
+                                            @endif
+                                        </div>
+                                    </form>
+                                </td>
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="6" class="px-5 py-14 text-center">
+                                <td colspan="7" class="px-5 py-14 text-center">
                                     <p class="text-sm font-medium text-ink">No shipments yet</p>
                                     <p class="mt-1 text-xs text-muted">
                                         Use the “New shipment” button to add a manual entry, or wait for the next provider sync.

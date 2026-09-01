@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\JournalAccount;
+use App\Models\JournalCategory;
 use App\Models\Order;
+use App\Services\JournalService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -75,11 +78,37 @@ class AuditController extends Controller
         $topProducts = $this->topProducts($base, 10);
         $monthly = $this->monthly($start, $end);
 
+        // Journal entries: posted expenses / other income inside the same range.
+        $journal = app(JournalService::class);
+        $journalTotals = $journal->pnlTotals(
+            $start?->copy()->startOfDay(),
+            $end?->copy()->endOfDay()
+        );
+        $journalMonthly = $journal->pnlMonthly($start, $end);
+
+        // Merge journal net adjustment into the monthly chart so the line is
+        // continuous. Net profit per month = (revenue - cogs) + journal net.
+        $monthly = $this->mergeJournalIntoMonthly($monthly, $journalMonthly);
+
+        // Net profit after journal adjustments.
+        $totals['gross_profit'] = $totals['profit'];
+        $totals['journal_expense'] = $journalTotals['total_expense'];
+        $totals['journal_income'] = $journalTotals['total_income'];
+        $totals['journal_net'] = $journalTotals['net_adjustment'];
+        $totals['profit'] = round($totals['profit'] + $journalTotals['net_adjustment'], 2);
+        $totals['margin'] = $totals['revenue'] > 0
+            ? round(($totals['profit'] / $totals['revenue']) * 100, 1)
+            : 0.0;
+
+        $journalByCategory = $this->journalBreakdownByCategory($journalTotals['by_category']);
+
         return view('audit.index', [
             'totals' => $totals,
             'byCategory' => $byCategory,
             'topProducts' => $topProducts,
             'monthly' => $monthly,
+            'journalByCategory' => $journalByCategory,
+            'journalTotals' => $journalTotals,
             'range' => [
                 'preset' => $activePreset,
                 'start' => $start,
@@ -330,5 +359,85 @@ class AuditController extends Controller
         return $start && $end
             ? $start->format('M j, Y').' – '.$end->format('M j, Y')
             : 'All time';
+    }
+
+    /**
+     * Merge the per-month journal adjustment into the sales monthly series.
+     *
+     * @param  array<int, array<string, mixed>>  $monthly
+     * @param  array<int, array{key: string, label: string, expense: float, income: float, net: float}>  $journalMonthly
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeJournalIntoMonthly(array $monthly, array $journalMonthly): array
+    {
+        $journalByKey = [];
+        foreach ($journalMonthly as $row) {
+            $journalByKey[$row['key']] = $row;
+        }
+
+        foreach ($monthly as $i => $row) {
+            $journal = $journalByKey[$row['key']] ?? null;
+            $journalNet = $journal ? (float) $journal['net'] : 0.0;
+            $journalExpense = $journal ? (float) $journal['expense'] : 0.0;
+            $journalIncome = $journal ? (float) $journal['income'] : 0.0;
+
+            $monthly[$i]['journal_expense'] = $journalExpense;
+            $monthly[$i]['journal_income'] = $journalIncome;
+            $monthly[$i]['journal_net'] = $journalNet;
+            $monthly[$i]['profit'] = round((float) $row['profit'] + $journalNet, 2);
+            $monthly[$i]['margin'] = (float) $row['revenue'] > 0
+                ? round(($monthly[$i]['profit'] / (float) $row['revenue']) * 100, 1)
+                : 0.0;
+        }
+
+        return $monthly;
+    }
+
+    /**
+     * Format the journal P&L by-category list for the audit view.
+     *
+     * Returns each category with its default account and amount, signed so
+     * the view can show +/− without re-deriving signs.
+     *
+     * @param  \Illuminate\Support\Collection<int, object>  $byCategory
+     * @return array<int, array{name: string, type: string, account: string, color: ?string, amount: float, signed: float}>
+     */
+    private function journalBreakdownByCategory($byCategory): array
+    {
+        $categoryIds = $byCategory
+            ->pluck('category_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $categories = JournalCategory::with('defaultAccount')
+            ->whereIn('id', $categoryIds)
+            ->get()
+            ->keyBy('id');
+
+        $rows = [];
+        foreach ($byCategory as $row) {
+            $category = $categories->get($row->category_id);
+            if (! $category) {
+                continue;
+            }
+            $amount = (float) $row->amount;
+            $rows[] = [
+                'name' => $category->name,
+                'type' => $category->type,
+                'account' => $category->defaultAccount?->name ?? '—',
+                'color' => $category->color,
+                'amount' => abs($amount),
+                'signed' => $amount,
+            ];
+        }
+
+        // Largest impact first.
+        usort($rows, function ($a, $b) {
+            return abs($b['signed']) <=> abs($a['signed']);
+        });
+
+        return $rows;
     }
 }

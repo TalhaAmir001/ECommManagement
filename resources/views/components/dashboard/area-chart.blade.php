@@ -27,9 +27,7 @@
             . ' ' . number_format($pts[0][0], 1, '.', '') . ',' . ($h - $pad);
     }
 
-    $money = fn ($v) => $v >= 1000000
-        ? '$' . number_format($v / 1000000, 1) . 'm'
-        : ($v >= 1000 ? '$' . number_format($v / 1000, 1) . 'k' : '$' . number_format($v, 0));
+    $money = fn ($v) => compact_money($v);
 
     $firstLabel = $n > 0 ? $series[0]['label'] : '';
     $midLabel = $n > 1 ? $series[intdiv($n - 1, 2)]['label'] : '';
@@ -41,7 +39,7 @@
     <div class="absolute inset-y-0 left-0 flex w-11 flex-col justify-between py-1 text-right">
         <span class="text-[11px] tabular-nums text-faint">{{ $money($niceMax) }}</span>
         <span class="text-[11px] tabular-nums text-faint">{{ $money($niceMax / 2) }}</span>
-        <span class="text-[11px] tabular-nums text-faint">$0</span>
+        <span class="text-[11px] tabular-nums text-faint">{{ currency_symbol() }}0</span>
     </div>
 
     {{-- Plot --}}

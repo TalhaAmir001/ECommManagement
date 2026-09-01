@@ -22,13 +22,79 @@
         {{-- Stat cards --}}
         <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <x-dashboard.stat-card label="Revenue" :value="$stats['revenue']['value']" format="currency"
-                :delta="$stats['revenue']['delta']" :spark="$stats['revenue']['spark']" icon="dollar-sign" />
+                :delta="$stats['revenue']['delta']" :spark="$stats['revenue']['spark']" icon="trending-up" />
             <x-dashboard.stat-card label="Orders" :value="$stats['orders']['value']" format="number"
                 :delta="$stats['orders']['delta']" :spark="$stats['orders']['spark']" icon="shopping-cart" />
             <x-dashboard.stat-card label="New Customers" :value="$stats['customers']['value']" format="number"
                 :delta="$stats['customers']['delta']" :spark="$stats['customers']['spark']" icon="user-plus" />
             <x-dashboard.stat-card label="Avg Order Value" :value="$stats['aov']['value']" format="currency"
                 :delta="$stats['aov']['delta']" :spark="$stats['aov']['spark']" icon="receipt" />
+        </div>
+
+        {{-- P&L summary strip --}}
+        <div class="mt-6 rounded-2xl border border-line bg-surface shadow-sm shadow-ink/[0.02]">
+            <div class="flex flex-col gap-1 border-b border-line p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h2 class="text-sm font-semibold text-ink">Profit &amp; loss</h2>
+                    <p class="mt-0.5 text-xs text-muted">Gross margin with manual journal adjustments for the selected period.</p>
+                </div>
+                <a href="{{ route('journal.index') }}" class="inline-flex items-center gap-1 text-xs font-medium text-ink hover:text-accent">
+                    Manage journal entries
+                    <x-dashboard.icon name="arrow-up-right" class="h-3.5 w-3.5" />
+                </a>
+            </div>
+
+            <div class="grid grid-cols-1 gap-px bg-line sm:grid-cols-3">
+                {{-- Gross profit --}}
+                <div class="bg-surface p-5">
+                    <div class="flex items-center gap-2.5">
+                        <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-canvas text-muted">
+                            <x-dashboard.icon name="receipt" class="h-4 w-4" />
+                        </span>
+                        <p class="text-sm font-medium text-muted">Gross profit</p>
+                    </div>
+                    <p class="mt-4 text-2xl font-semibold tracking-tight text-ink tabular-nums">{{ format_money($pnl['gross_profit'], 2) }}</p>
+                    <p class="mt-1 text-xs {{ $pnl['gross_profit_delta'] >= 0 ? 'text-positive' : 'text-negative' }}">
+                        {{ $pnl['gross_profit_delta'] >= 0 ? '+' : '' }}{{ number_format($pnl['gross_profit_delta'], 1) }}% vs. previous {{ $range }}d
+                    </p>
+                </div>
+
+                {{-- Operating adjustments --}}
+                <div class="bg-surface p-5">
+                    <div class="flex items-center gap-2.5">
+                        <span class="flex h-7 w-7 items-center justify-center rounded-lg bg-canvas text-muted">
+                            <x-dashboard.icon name="book-open" class="h-4 w-4" />
+                        </span>
+                        <p class="text-sm font-medium text-muted">Operating adjustments</p>
+                    </div>
+                    <p class="mt-4 text-2xl font-semibold tracking-tight text-ink tabular-nums">
+                        <span class="{{ $pnl['journal_net'] < 0 ? 'text-negative' : 'text-positive' }}">{{ $pnl['journal_net'] >= 0 ? '+' : '−' }}{{ format_money(abs($pnl['journal_net']), 2) }}</span>
+                    </p>
+                    <p class="mt-1 text-xs text-muted">
+                        <span class="text-negative">−{{ format_money($pnl['journal_expense'], 2) }}</span>
+                        expenses
+                        ·
+                        <span class="text-positive">+{{ format_money($pnl['journal_income'], 2) }}</span>
+                        other income
+                    </p>
+                </div>
+
+                {{-- Net profit --}}
+                <div class="bg-surface p-5">
+                    <div class="flex items-center gap-2.5">
+                        <span class="flex h-7 w-7 items-center justify-center rounded-lg {{ $pnl['net_profit'] >= 0 ? 'bg-positive-soft text-positive' : 'bg-negative-soft text-negative' }}">
+                            <x-dashboard.icon name="trending-up" class="h-4 w-4" />
+                        </span>
+                        <p class="text-sm font-medium text-muted">Net profit</p>
+                    </div>
+                    <p class="mt-4 text-2xl font-semibold tracking-tight tabular-nums {{ $pnl['net_profit'] >= 0 ? 'text-positive' : 'text-negative' }}">
+                        {{ format_money($pnl['net_profit'], 2) }}
+                    </p>
+                    <p class="mt-1 text-xs {{ $pnl['net_profit_delta'] >= 0 ? 'text-positive' : 'text-negative' }}">
+                        {{ $pnl['net_profit_delta'] >= 0 ? '+' : '' }}{{ number_format($pnl['net_profit_delta'], 1) }}% vs. previous {{ $range }}d
+                    </p>
+                </div>
+            </div>
         </div>
 
         {{-- Charts --}}

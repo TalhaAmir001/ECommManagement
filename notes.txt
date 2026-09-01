@@ -1,0 +1,20 @@
+Priority:
+Make sure the order made is associated with courier shipments(almost done, working on when order delivery bookings are created in the Leopard dashboard and they should show associated with orders as well)
+Clean siderbar (on it)-done
+Making sidebar static (done - fixed shell in layouts/dashboard.blade.php, only <main> scrolls)-done
+Improve upon UX/UI
+Journal Entries
+ .need to add their effects on audit
+Created manual linking shipments with orders:
+ .need a separate page to view order details
+ .need to make orders selectable done
+ .need a button to link/unlink orders in the shipments table done
+ .need to auto generate tracking number done
+ .need option to update shipment status done
+Created option on each order to add a tracking number. Need to remove it?
+Need to make working transaction systems(orders complete -> money shown)
+Need to make Audit calculations as per client request
+Created settings option to add courier provider with APi
+
+
+MNP,Trax

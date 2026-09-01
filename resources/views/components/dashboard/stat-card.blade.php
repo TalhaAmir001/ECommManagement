@@ -9,7 +9,7 @@
 
 @php
     $display = $format === 'currency'
-        ? '$' . number_format((float) $value, 2)
+        ? format_money((float) $value, 2)
         : number_format((float) $value, 0);
 
     $positive = $delta > 0;
