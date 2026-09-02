@@ -18,3 +18,5 @@ Created settings option to add courier provider with APi
 
 
 MNP,Trax
+Commands:
+php artisan queue:work --queue=shopify-webhooks --tries=5 --sleep=3
