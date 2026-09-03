@@ -552,6 +552,37 @@ class ShipmentController extends Controller
     }
 
     /**
+     * Backfill / correct the money fields on a single shipment.
+     *
+     * Courier-API and Shopify rows often arrive with a null cost (the
+     * courier hasn't billed yet) or a COD amount the operator wants to
+     * confirm. The Audit report reads these columns, so every shipment
+     * should be editable regardless of which source created it.
+     *
+     * Empty strings arrive as null (ConvertEmptyStringsToNull), which
+     * clears the figure. Leaving currency blank keeps the existing value.
+     */
+    public function updateMoney(Request $request, Shipment $shipment): RedirectResponse
+    {
+        $data = $request->validate([
+            'cod_amount' => ['nullable', 'numeric', 'min:0'],
+            'cost' => ['nullable', 'numeric', 'min:0'],
+            'currency' => ['nullable', 'string', 'size:3'],
+        ]);
+
+        $shipment->forceFill([
+            'cod_amount' => $data['cod_amount'] ?? null,
+            'cost' => $data['cost'] ?? null,
+            'currency' => $data['currency'] !== null
+                ? strtoupper($data['currency'])
+                : ($shipment->currency ?: config('couriers.default_currency', 'PKR')),
+        ])->save();
+
+        return redirect()->route('shipments.show', $shipment)
+            ->with('status', 'Shipment pricing and costs updated.');
+    }
+
+    /**
      * Generate a unique tracking number for a manual shipment.
      *
      * Format: `MNL-XXXXXXXX` where X is drawn from an alphabet that

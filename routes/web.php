@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuditController;
 use App\Http\Controllers\CourierProviderController;
+use App\Http\Controllers\CourierRateController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\JournalCategoryController;
 use App\Http\Controllers\JournalEntryController;
@@ -45,6 +46,7 @@ Route::post('/shipments/{shipment}/link', [ShipmentController::class, 'link'])->
 Route::post('/shipments/{shipment}/unlink', [ShipmentController::class, 'unlink'])->name('shipments.unlink');
 Route::post('/shipments/{shipment}/rematch', [ShipmentController::class, 'rematch'])->name('shipments.rematch');
 Route::post('/shipments/{shipment}/refresh', [ShipmentController::class, 'refresh'])->name('shipments.refresh');
+Route::post('/shipments/{shipment}/money', [ShipmentController::class, 'updateMoney'])->name('shipments.money');
 Route::post('/shipments/{shipment}/events', [ShipmentController::class, 'addEvent'])->name('shipments.events.store');
 
 // Order-level quick actions: add tracking, assign courier.
@@ -58,6 +60,14 @@ Route::post('/couriers/settings', [CourierProviderController::class, 'store'])->
 Route::get('/couriers/settings/{provider}', [CourierProviderController::class, 'edit'])->name('couriers.edit');
 Route::put('/couriers/settings/{provider}', [CourierProviderController::class, 'update'])->name('couriers.update');
 Route::delete('/couriers/settings/{provider}', [CourierProviderController::class, 'destroy'])->name('couriers.destroy');
+
+// Courier rate cards — named zones + a zones × weight-bands price matrix.
+Route::get('/couriers/settings/{provider}/rates', [CourierRateController::class, 'index'])->name('couriers.rates.index');
+Route::post('/couriers/settings/{provider}/rates/zones', [CourierRateController::class, 'storeZone'])->name('couriers.rates.zones.store');
+Route::delete('/couriers/settings/{provider}/rates/zones/{zone}', [CourierRateController::class, 'destroyZone'])->name('couriers.rates.zones.destroy');
+Route::post('/couriers/settings/{provider}/rates', [CourierRateController::class, 'store'])->name('couriers.rates.store');
+Route::put('/couriers/settings/{provider}/rates/{rate}', [CourierRateController::class, 'update'])->name('couriers.rates.update');
+Route::delete('/couriers/settings/{provider}/rates/{rate}', [CourierRateController::class, 'destroy'])->name('couriers.rates.destroy');
 
 Route::post('/courier-providers/{provider}/toggle', [CourierProviderController::class, 'toggle'])->name('courier-providers.toggle');
 Route::post('/courier-providers/{provider}/sync', [CourierProviderController::class, 'syncNow'])->name('courier-providers.sync');

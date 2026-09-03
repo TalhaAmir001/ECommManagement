@@ -14,7 +14,8 @@ Created manual linking shipments with orders:
 Created option on each order to add a tracking number. Need to remove it?
 Need to make working transaction systems(orders complete -> money shown)
 Need to make Audit calculations as per client request
-Created settings option to add courier provider with APi
+Created settings option to add courier provider with APi - done
+Need to get weights of actual shipments being delivered(do weight thing in a new chat)
 
 
 MNP,Trax

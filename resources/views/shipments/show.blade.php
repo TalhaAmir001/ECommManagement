@@ -231,7 +231,14 @@
                         <div>
                             <dt class="text-xs text-muted">Weight</dt>
                             <dd class="mt-0.5 font-medium text-ink tabular-nums">
-                                {{ $shipment->weight_kg !== null ? rtrim(rtrim(number_format((float) $shipment->weight_kg, 3), '0'), '.') . ' kg' : '—' }}
+                                @if ($shipment->weight_kg !== null)
+                                    {{ rtrim(rtrim(number_format((float) $shipment->weight_kg, 3), '0'), '.') }} kg
+                                @elseif ($shipment->effectiveWeightKg() !== null)
+                                    {{ rtrim(rtrim(number_format($shipment->effectiveWeightKg(), 3), '0'), '.') }} kg
+                                    <span class="ml-1 inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">from order</span>
+                                @else
+                                    —
+                                @endif
                             </dd>
                         </div>
                         <div>
@@ -247,7 +254,24 @@
                         <div>
                             <dt class="text-xs text-muted">Shipping cost</dt>
                             <dd class="mt-0.5 font-medium text-ink tabular-nums">
-                                {{ $shipment->cost !== null ? format_money((float) $shipment->cost) : '—' }}
+                                @if ($shipment->effectiveCost() !== null)
+                                    {{ format_money($shipment->effectiveCost()) }}
+                                    @if ($shipment->costIsEstimated())
+                                        <span class="ml-1 inline-flex rounded-full bg-accent-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">estimated</span>
+                                    @endif
+                                @else
+                                    —
+                                @endif
+                            </dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs text-muted">Net (COD − cost)</dt>
+                            <dd class="mt-0.5 font-medium tabular-nums {{ $shipment->cod_amount !== null && $shipment->effectiveCost() !== null && (float) $shipment->cod_amount - $shipment->effectiveCost() < 0 ? 'text-negative' : 'text-ink' }}">
+                                @if ($shipment->cod_amount !== null && $shipment->effectiveCost() !== null)
+                                    {{ format_money((float) $shipment->cod_amount - $shipment->effectiveCost()) }}
+                                @else
+                                    —
+                                @endif
                             </dd>
                         </div>
                         <div>
@@ -259,6 +283,44 @@
                             <dd class="mt-0.5 font-medium text-ink tabular-nums">{{ $shipment->delivered_at?->format('M j, Y · g:i A') ?? '—' }}</dd>
                         </div>
                     </dl>
+
+                    {{-- Money fields can arrive null from every source (the
+                         courier hasn't billed, Shopify carries no cost, the
+                         operator pasted a bare tracking number). This editor
+                         lets the operator backfill cost / COD so the Audit
+                         report always has the full picture. --}}
+                    <details class="mt-4" data-shipment-money-editor>
+                        <summary class="inline-flex cursor-pointer list-none items-center gap-1 rounded-md border border-line bg-canvas px-2 py-1 text-xs font-medium text-muted transition-colors hover:text-ink">
+                            <x-dashboard.icon name="edit" class="h-3.5 w-3.5" />
+                            Edit pricing &amp; costs
+                        </summary>
+                        <form method="POST" action="{{ route('shipments.money', $shipment) }}" class="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-line bg-canvas/40 p-3">
+                            @csrf
+                            <div>
+                                <label class="mb-1.5 block text-xs font-medium text-muted">Shipping cost</label>
+                                <input name="cost" type="number" step="0.01" min="0"
+                                    value="{{ $shipment->cost !== null ? (float) $shipment->cost : '' }}"
+                                    placeholder="{{ $shipment->cost === null && $shipment->estimatedCost() !== null ? '~'.number_format($shipment->estimatedCost(), 2).' estimated' : '' }}"
+                                    class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-xs font-medium text-muted">COD amount</label>
+                                <input name="cod_amount" type="number" step="0.01" min="0"
+                                    value="{{ $shipment->cod_amount !== null ? (float) $shipment->cod_amount : '' }}"
+                                    class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                            </div>
+                            <div>
+                                <label class="mb-1.5 block text-xs font-medium text-muted">Currency</label>
+                                <input name="currency" maxlength="3"
+                                    value="{{ $shipment->currency ?? 'PKR' }}"
+                                    class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm uppercase text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                            </div>
+                            <div class="flex items-end">
+                                <button type="submit" class="rounded-lg bg-ink px-3 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Save</button>
+                            </div>
+                            <p class="col-span-2 text-[11px] text-muted">Leave a field blank to clear it. These figures feed the courier-cost and COD rows on the Audit report.</p>
+                        </form>
+                    </details>
                 </div>
             </div>
         </div>

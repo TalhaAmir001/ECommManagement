@@ -292,6 +292,10 @@ class JournalService
             $cursor->addMonth();
         }
 
+        $monthExpr = DB::connection()->getDriverName() === 'mysql'
+            ? "DATE_FORMAT(je.entry_date, '%Y-%m')"
+            : "strftime('%Y-%m', je.entry_date)";
+
         $rows = DB::table('journal_lines as jl')
             ->join('journal_entries as je', 'je.id', '=', 'jl.entry_id')
             ->join('journal_accounts as ja', 'ja.id', '=', 'jl.account_id')
@@ -301,7 +305,7 @@ class JournalService
                 $windowStart->toDateString(),
                 $windowEnd->toDateString(),
             ])
-            ->selectRaw('DATE_FORMAT(je.entry_date, "%Y-%m") as month_key,
+            ->selectRaw($monthExpr.' as month_key,
                          ja.type as account_type,
                          SUM(jl.debit) as debit, SUM(jl.credit) as credit')
             ->groupBy('month_key', 'ja.type')

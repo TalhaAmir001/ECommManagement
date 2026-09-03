@@ -24,6 +24,7 @@ class Product extends Model
         'price',
         'cost',
         'stock',
+        'weight_kg',
         'shopify_id',
     ];
 
@@ -37,6 +38,7 @@ class Product extends Model
         return [
             'price' => 'decimal:2',
             'cost' => 'decimal:2',
+            'weight_kg' => 'decimal:3',
         ];
     }
 

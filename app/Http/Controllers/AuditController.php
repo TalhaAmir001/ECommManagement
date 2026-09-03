@@ -6,9 +6,11 @@ use App\Models\JournalAccount;
 use App\Models\JournalCategory;
 use App\Models\Order;
 use App\Services\JournalService;
+use App\Services\ShippingFinanceService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 class AuditController extends Controller
@@ -86,18 +88,34 @@ class AuditController extends Controller
         );
         $journalMonthly = $journal->pnlMonthly($start, $end);
 
-        // Merge journal net adjustment into the monthly chart so the line is
-        // continuous. Net profit per month = (revenue - cogs) + journal net.
-        $monthly = $this->mergeJournalIntoMonthly($monthly, $journalMonthly);
+        // Courier shipping money inside the same window. Courier cost is an
+        // operating expense; COD is cash collected on delivered parcels.
+        $shipping = app(ShippingFinanceService::class);
+        $shippingTotals = $shipping->totals($start, $end);
+        $shippingMonthly = $shipping->monthly($start, $end);
 
-        // Net profit after journal adjustments.
+        // Merge journal net adjustment into the monthly chart so the line is
+        // continuous. Net profit per month = (revenue - cogs - courier cost)
+        // + journal net.
+        $monthly = $this->mergeJournalIntoMonthly($monthly, $journalMonthly);
+        $monthly = $this->mergeShippingIntoMonthly($monthly, $shippingMonthly);
+
+        // Net profit after courier costs and journal adjustments.
         $totals['gross_profit'] = $totals['profit'];
         $totals['journal_expense'] = $journalTotals['total_expense'];
         $totals['journal_income'] = $journalTotals['total_income'];
         $totals['journal_net'] = $journalTotals['net_adjustment'];
-        $totals['profit'] = round($totals['profit'] + $journalTotals['net_adjustment'], 2);
+        $totals['shipping_cost'] = $shippingTotals['shipping_cost'];
+        $totals['shipping_actual_cost'] = $shippingTotals['actual_cost'];
+        $totals['shipping_estimated_cost'] = $shippingTotals['estimated_cost'];
+        $totals['cod_collected'] = $shippingTotals['cod_collected'];
+        $totals['shipping_net'] = $shippingTotals['shipping_net'];
+        $totals['profit'] = round($totals['gross_profit'] - $totals['shipping_cost'] + $totals['journal_net'], 2);
         $totals['margin'] = $totals['revenue'] > 0
             ? round(($totals['profit'] / $totals['revenue']) * 100, 1)
+            : 0.0;
+        $totals['avg_profit_per_order'] = $totals['orders'] > 0
+            ? round($totals['profit'] / $totals['orders'], 2)
             : 0.0;
 
         $journalByCategory = $this->journalBreakdownByCategory($journalTotals['by_category']);
@@ -279,6 +297,20 @@ class AuditController extends Controller
     }
 
     /**
+     * Cross-database SQL expression producing a "Y-m" month key from a
+     * timestamp column. Kept in one place so monthly reports run on the
+     * MySQL production database and the SQLite test suite alike.
+     */
+    private function monthExpr(string $column): string
+    {
+        return match (DB::connection()->getDriverName()) {
+            'mysql' => "DATE_FORMAT({$column}, '%Y-%m')",
+            'pgsql' => "to_char({$column}, 'YYYY-MM')",
+            default => "strftime('%Y-%m', {$column})",
+        };
+    }
+
+    /**
      * Monthly profit & loss view, oldest to newest. Always covers the last
      * 12 months (or the range itself, whichever is shorter) so the chart and
      * the table stay useful even for short custom windows.
@@ -310,6 +342,8 @@ class AuditController extends Controller
             $cursor->addMonth();
         }
 
+        $monthExpr = $this->monthExpr('orders.created_at');
+
         $query = Order::query()
             ->join('order_items', 'order_items.order_id', '=', 'orders.id')
             ->join('products', 'products.id', '=', 'order_items.product_id')
@@ -317,7 +351,7 @@ class AuditController extends Controller
             ->whereIn('orders.status', self::SUCCESS_ORDER_STATUSES)
             ->whereNotIn('orders.financial_status', ['REFUNDED', 'VOIDED', 'refunded', 'voided'])
             ->whereBetween('orders.created_at', [$windowStart, $windowEnd])
-            ->selectRaw('DATE_FORMAT(orders.created_at, "%Y-%m") as month_key,
+            ->selectRaw($monthExpr.' as month_key,
                          SUM(order_items.quantity * order_items.unit_price) as revenue,
                          SUM(order_items.quantity * products.cost) as cogs,
                          COUNT(DISTINCT orders.id) as orders')
@@ -385,6 +419,38 @@ class AuditController extends Controller
             $monthly[$i]['journal_income'] = $journalIncome;
             $monthly[$i]['journal_net'] = $journalNet;
             $monthly[$i]['profit'] = round((float) $row['profit'] + $journalNet, 2);
+            $monthly[$i]['margin'] = (float) $row['revenue'] > 0
+                ? round(($monthly[$i]['profit'] / (float) $row['revenue']) * 100, 1)
+                : 0.0;
+        }
+
+        return $monthly;
+    }
+
+    /**
+     * Deduct courier cost from each month's profit and attach the shipping
+     * money columns used by the monthly table. Runs after the journal merge
+     * so the final profit per month is gross - courier cost + journal net.
+     *
+     * @param  array<int, array<string, mixed>>  $monthly
+     * @param  array<int, array{key: string, label: string, shipping_cost: float, cod_collected: float}>  $shippingMonthly
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeShippingIntoMonthly(array $monthly, array $shippingMonthly): array
+    {
+        $shippingByKey = [];
+        foreach ($shippingMonthly as $row) {
+            $shippingByKey[$row['key']] = $row;
+        }
+
+        foreach ($monthly as $i => $row) {
+            $shipping = $shippingByKey[$row['key']] ?? null;
+            $cost = $shipping ? (float) $shipping['shipping_cost'] : 0.0;
+            $cod = $shipping ? (float) $shipping['cod_collected'] : 0.0;
+
+            $monthly[$i]['shipping_cost'] = round($cost, 2);
+            $monthly[$i]['cod_collected'] = round($cod, 2);
+            $monthly[$i]['profit'] = round((float) $row['profit'] - $cost, 2);
             $monthly[$i]['margin'] = (float) $row['revenue'] > 0
                 ? round(($monthly[$i]['profit'] / (float) $row['revenue']) * 100, 1)
                 : 0.0;

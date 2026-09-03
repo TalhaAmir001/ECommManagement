@@ -53,6 +53,14 @@ final class ShopifyQueries
                             sku
                             title
                             price
+                            inventoryItem {
+                                measurement {
+                                    weight {
+                                        value
+                                        unit
+                                    }
+                                }
+                            }
                             product { id title productType }
                         }
                     }

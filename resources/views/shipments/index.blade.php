@@ -288,15 +288,16 @@
                             @endphp
                             <tr class="group transition-colors hover:bg-canvas/60" data-shipment-row="{{ $shipment->id }}">
                                 <td class="py-3.5 pl-5 pr-4">
-                                    @if ($shipment->tracking_url)
-                                        <a href="{{ $shipment->tracking_url }}" target="_blank" rel="noopener" class="font-semibold text-ink hover:text-accent">
-                                            {{ $shipment->tracking_number }}
-                                        </a>
-                                    @else
+                                    <div class="flex items-center gap-1.5">
                                         <a href="{{ route('shipments.show', $shipment) }}" class="font-semibold text-ink hover:text-accent">
                                             {{ $shipment->tracking_number }}
                                         </a>
-                                    @endif
+                                        @if ($shipment->tracking_url)
+                                            <a href="{{ $shipment->tracking_url }}" target="_blank" rel="noopener" class="text-muted transition-colors hover:text-ink" title="Open courier tracking">
+                                                <x-dashboard.icon name="arrow-up-right" class="h-3.5 w-3.5" />
+                                            </a>
+                                        @endif
+                                    </div>
                                     @if ($shipment->carrier_name)
                                         <p class="text-xs text-muted">{{ $shipment->carrier_name }}</p>
                                     @elseif ($shipment->reference)
@@ -334,6 +335,12 @@
                                 </td>
                                 <td class="py-3.5 pr-4">
                                     <div class="flex flex-wrap items-center justify-end gap-1.5">
+                                        <a href="{{ route('shipments.show', $shipment) }}"
+                                            class="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-canvas"
+                                            title="View shipment details">
+                                            <x-dashboard.icon name="book-open" class="h-3 w-3" />
+                                            Details
+                                        </a>
                                         <button type="button"
                                             data-toggle-picker="{{ $shipment->id }}"
                                             data-picker-kind="status"

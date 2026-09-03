@@ -74,4 +74,33 @@ class Order extends Model
     {
         return $this->belongsTo(CourierProvider::class, 'courier_provider_id');
     }
+
+    /**
+     * Total weight (kg) of everything on the order, computed from the
+     * products behind each line item (quantity × product weight). Null when
+     * none of the order's items carry a product weight yet.
+     *
+     * Shipments linked to this order inherit this figure as their default
+     * weight (see ShipmentObserver), which the DeliveryRateCalculator then
+     * prices against the courier's zone/weight rate card.
+     */
+    public function totalWeightKg(): ?float
+    {
+        $total = 0.0;
+
+        foreach ($this->items as $item) {
+            $weightKg = $item->product?->weight_kg;
+            if ($weightKg === null) {
+                continue;
+            }
+
+            $total += (float) $weightKg * (int) ($item->quantity ?: 1);
+        }
+
+        // A zero total means nothing on the order actually carries a real
+        // weight yet — Shopify reports unset product weights as 0. Treat
+        // that as "unknown" rather than a genuine 0 kg parcel, so callers
+        // keep deriving instead of settling on a meaningless zero.
+        return $total > 0 ? round($total, 3) : null;
+    }
 }

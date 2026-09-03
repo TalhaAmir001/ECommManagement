@@ -161,6 +161,9 @@ class OrderController extends Controller
         $data = $request->validate([
             'tracking_number' => ['required', 'string', 'max:128'],
             'carrier_name' => ['nullable', 'string', 'max:64'],
+            'cost' => ['nullable', 'numeric', 'min:0'],
+            'cod_amount' => ['nullable', 'numeric', 'min:0'],
+            'currency' => ['nullable', 'string', 'size:3'],
         ]);
 
         $manual = CourierProviderModel::query()->where('key', 'manual')->firstOrFail();
@@ -175,7 +178,9 @@ class OrderController extends Controller
             'matched_method' => 'manual',
             'matched_at' => now(),
             'status' => ShipmentStatus::Created->value,
-            'currency' => config('couriers.default_currency', 'PKR'),
+            'cost' => $data['cost'] ?? null,
+            'cod_amount' => $data['cod_amount'] ?? null,
+            'currency' => $data['currency'] ?? config('couriers.default_currency', 'PKR'),
             'shipped_at' => now(),
             'last_event_at' => now(),
         ]);

@@ -30,6 +30,46 @@ use Illuminate\Support\Facades\Log;
 class ShipmentObserver
 {
     /**
+     * Fired before a shipment row is inserted or updated. When the courier
+     * hasn't supplied an actual weight (`weight_kg` is null) and the
+     * shipment is linked to an order, we derive one from the order's line
+     * items (quantity × product weight).
+     *
+     * A weight the courier reported or the operator typed in is never
+     * overwritten — the derivation is a fallback for shipments that would
+     * otherwise reach the DeliveryRateCalculator weightless (Shopify
+     * fulfillment shipments above all).
+     *
+     * Why here and not in each controller/job: the same reason the status
+     * propagation below lives here — every write path (manual entry,
+     * courier sync, Shopify ingest, order "add tracking", auto-match
+     * re-linking) goes through Eloquent save.
+     */
+    public function saving(Shipment $shipment): void
+    {
+        // A recorded weight > 0 is the courier's / operator's figure and is
+        // never overwritten. Zero carries no information (Shopify reports
+        // unset product weights as 0), so a zero or blank weight still gets
+        // derived from the order below.
+        if ($shipment->weight_kg !== null && (float) $shipment->weight_kg > 0) {
+            return;
+        }
+        if ($shipment->order_id === null) {
+            return;
+        }
+
+        $order = Order::query()->with('items.product')->find($shipment->order_id);
+        if ($order === null) {
+            return;
+        }
+
+        $weight = $order->totalWeightKg();
+        if ($weight !== null) {
+            $shipment->weight_kg = $weight;
+        }
+    }
+
+    /**
      * Called after a shipment is saved. The shipment's status may have
      * changed (new row, updated row, or an event-driven mutation). We
      * only act when there's actually a linked order.

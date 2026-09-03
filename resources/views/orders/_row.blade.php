@@ -78,7 +78,9 @@
                 <form method="POST" action="{{ route('orders.add-tracking', $order) }}" class="flex flex-wrap items-center gap-1.5">
                     @csrf
                     <input name="tracking_number" required placeholder="Tracking #" class="flex-1 min-w-[8rem] rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
-                    <input name="carrier_name" placeholder="Carrier (optional)" class="w-32 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                    <input name="carrier_name" placeholder="Carrier (optional)" class="w-28 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                    <input name="cost" type="number" step="0.01" min="0" placeholder="Cost" title="Courier cost (optional)" class="w-16 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                    <input name="cod_amount" type="number" step="0.01" min="0" placeholder="COD" title="COD amount (optional)" class="w-16 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
                     <button type="submit" class="rounded-md bg-ink px-2.5 py-1 text-[11px] font-medium text-surface transition-colors hover:bg-ink/90">Add</button>
                 </form>
                 <form method="POST" action="{{ route('orders.assign-provider', $order) }}" class="flex flex-wrap items-center gap-1.5">

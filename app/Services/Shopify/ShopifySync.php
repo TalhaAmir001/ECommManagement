@@ -70,6 +70,12 @@ class ShopifySync
                                             inventoryQuantity
                                             inventoryItem {
                                                 unitCost { amount }
+                                                measurement {
+                                                    weight {
+                                                        value
+                                                        unit
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -238,7 +244,59 @@ class ShopifySync
             'price' => (float) ($variant['price'] ?? 0),
             'cost' => (float) ($inventoryItem['unitCost']['amount'] ?? 0),
             'stock' => (int) ($variant['inventoryQuantity'] ?? 0),
+            'weight_kg' => $this->variantWeightKg($variant),
         ];
+    }
+
+    /**
+     * Read a variant's weight regardless of which Shopify API generation
+     * produced the payload.
+     *
+     * Current Admin API versions (2024-10+) expose weight on the
+     * inventory item's measurement block:
+     *
+     *     inventoryItem { measurement { weight { value unit } } }
+     *
+     * Older versions exposed `weight` / `weightUnit` directly on the
+     * variant. Both shapes are accepted here so old cached payloads and
+     * webhook/order responses never silently drop a weight.
+     *
+     * @param  array<string, mixed>  $variant
+     */
+    private function variantWeightKg(array $variant): ?float
+    {
+        $weight = $variant['inventoryItem']['measurement']['weight'] ?? null;
+        if (is_array($weight)) {
+            return $this->normaliseWeightKg($weight['value'] ?? null, $weight['unit'] ?? null);
+        }
+
+        // Legacy shape: weight fields directly on the variant.
+        return $this->normaliseWeightKg($variant['weight'] ?? null, $variant['weightUnit'] ?? null);
+    }
+
+    /**
+     * Normalise a Shopify variant weight to kilograms.
+     *
+     * Shopify reports a variant's `weight` in whatever unit `weightUnit`
+     * declares (grams by default when the merchant never set a unit). The
+     * local schema — shipments.weight_kg and the courier rate bands — is
+     * always kilograms, so every incoming unit is converted here. Returns
+     * null when no weight has been configured for the variant.
+     */
+    private function normaliseWeightKg(mixed $weight, mixed $unit): ?float
+    {
+        if ($weight === null || $weight === '' || ! is_numeric($weight)) {
+            return null;
+        }
+
+        $grams = match (strtoupper(trim((string) ($unit ?? 'GRAMS')))) {
+            'KILOGRAMS' => (float) $weight * 1000,
+            'POUNDS' => (float) $weight * 453.59237,
+            'OUNCES' => (float) $weight * 28.349523125,
+            default => (float) $weight, // GRAMS — Shopify's implicit unit.
+        };
+
+        return round($grams / 1000, 3);
     }
 
     /**

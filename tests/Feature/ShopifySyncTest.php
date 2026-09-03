@@ -739,4 +739,140 @@ class ShopifySyncTest extends TestCase
         $shipment = Shipment::query()->where('external_id', 'gid://shopify/Fulfillment/9007')->firstOrFail();
         $this->assertSame('LEG-001', $shipment->tracking_number);
     }
+
+    public function test_it_syncs_variant_weight_normalised_to_kilograms(): void
+    {
+        $this->fakeShopify([
+            'products' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Product/2',
+                        'title' => 'Candle',
+                        'productType' => 'Home & Living',
+                        'variants' => [
+                            'edges' => [
+                                ['node' => [
+                                    'id' => 'gid://shopify/ProductVariant/21',
+                                    'title' => 'Default Title',
+                                    'sku' => 'CDL-S',
+                                    'price' => '10.00',
+                                    'inventoryQuantity' => 5,
+                                    'inventoryItem' => [
+                                        'unitCost' => null,
+                                        'measurement' => [
+                                            'weight' => ['value' => 250, 'unit' => 'GRAMS'],
+                                        ],
+                                    ],
+                                ]],
+                                ['node' => [
+                                    'id' => 'gid://shopify/ProductVariant/22',
+                                    'title' => 'Large',
+                                    'sku' => 'CDL-L',
+                                    'price' => '15.00',
+                                    'inventoryQuantity' => 3,
+                                    'inventoryItem' => [
+                                        'unitCost' => null,
+                                        'measurement' => [
+                                            'weight' => ['value' => 2.5, 'unit' => 'POUNDS'],
+                                        ],
+                                    ],
+                                ]],
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncProducts();
+
+        // 250 g → 0.25 kg.
+        $this->assertDatabaseHas('products', [
+            'shopify_id' => 'gid://shopify/ProductVariant/21',
+            'weight_kg' => 0.25,
+        ]);
+
+        // 2.5 lb ≈ 1.134 kg.
+        $this->assertDatabaseHas('products', [
+            'shopify_id' => 'gid://shopify/ProductVariant/22',
+            'weight_kg' => 1.134,
+        ]);
+    }
+
+    public function test_shopify_fulfillment_shipment_inherits_the_order_product_weight(): void
+    {
+        $this->seed(CourierProvidersSeeder::class);
+
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/400',
+                        'name' => '#3001',
+                        'createdAt' => '2026-08-05T10:00:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'FULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '39.98']],
+                        'customer' => null,
+                        'lineItems' => [
+                            'edges' => [
+                                ['node' => [
+                                    'id' => 'gid://shopify/LineItem/4000',
+                                    'quantity' => 2,
+                                    'title' => 'Ceramic Mug',
+                                    'originalUnitPriceSet' => null,
+                                    'variant' => [
+                                        'id' => 'gid://shopify/ProductVariant/41',
+                                        'sku' => 'MUG-500',
+                                        'title' => 'Default Title',
+                                        'price' => '19.99',
+                                        'inventoryItem' => [
+                                            'measurement' => [
+                                                'weight' => ['value' => 0.5, 'unit' => 'KILOGRAMS'],
+                                            ],
+                                        ],
+                                        'product' => [
+                                            'id' => 'gid://shopify/Product/4',
+                                            'title' => 'Ceramic Mug',
+                                            'productType' => 'Home & Living',
+                                        ],
+                                    ],
+                                ]],
+                            ],
+                        ],
+                        'fulfillments' => [
+                            [
+                                'id' => 'gid://shopify/Fulfillment/9400',
+                                'status' => 'SUCCESS',
+                                'displayStatus' => 'IN_TRANSIT',
+                                'createdAt' => '2026-08-05T12:00:00Z',
+                                'updatedAt' => '2026-08-05T12:00:00Z',
+                                'deliveredAt' => null,
+                                'estimatedDeliveryAt' => null,
+                                'trackingInfo' => [
+                                    ['number' => 'SFY-WT-001', 'company' => 'TCS', 'url' => null],
+                                ],
+                                'originAddress' => null,
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        // The product was created from the line item with its weight, the
+        // order item quantity is 2, so the linked shipment weighs 1.0 kg.
+        $this->assertDatabaseHas('products', [
+            'shopify_id' => 'gid://shopify/ProductVariant/41',
+            'weight_kg' => 0.5,
+        ]);
+
+        $shipment = Shipment::query()->where('tracking_number', 'SFY-WT-001')->firstOrFail();
+        $this->assertSame('1.000', (string) $shipment->weight_kg);
+    }
+
 }

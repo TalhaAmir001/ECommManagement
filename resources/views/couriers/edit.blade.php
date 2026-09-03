@@ -32,6 +32,14 @@
             </p>
         </div>
 
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+            <a href="{{ route('couriers.rates.index', $provider) }}"
+                class="inline-flex items-center gap-2 rounded-lg border border-line bg-surface px-3.5 py-2 text-xs font-medium text-ink transition-colors hover:bg-canvas">
+                <x-dashboard.icon name="edit" class="h-3.5 w-3.5" />
+                Delivery rates
+            </a>
+        </div>
+
         <form method="POST" action="{{ route('couriers.update', $provider) }}" class="mt-4">
             @csrf
             @method('PUT')

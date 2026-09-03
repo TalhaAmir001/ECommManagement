@@ -28,6 +28,7 @@ class ProductFactory extends Factory
             'price' => $price,
             'cost' => round($price * fake()->randomFloat(2, 0.4, 0.7), 2),
             'stock' => fake()->numberBetween(0, 120),
+            'weight_kg' => fake()->randomFloat(3, 0.05, 8),
         ];
     }
 }

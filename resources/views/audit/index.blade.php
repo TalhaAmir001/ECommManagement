@@ -98,7 +98,7 @@
                     {{ $money($totals['profit']) }}
                 </p>
                 <p class="mt-2 text-xs text-muted">
-                    Gross {{ $money($totals['gross_profit'] ?? 0) }} − expenses {{ $money($totals['journal_expense'] ?? 0) }} + other income {{ $money($totals['journal_income'] ?? 0) }}
+                    Gross {{ $money($totals['gross_profit'] ?? 0) }} − courier cost {{ $money($totals['shipping_cost'] ?? 0) }} − expenses {{ $money($totals['journal_expense'] ?? 0) }} + other income {{ $money($totals['journal_income'] ?? 0) }}
                 </p>
             </div>
 
@@ -123,6 +123,46 @@
                 <p class="text-sm font-medium text-muted">Avg profit / order</p>
                 <p class="mt-3 text-2xl font-semibold tracking-tight text-ink tabular-nums">{{ $money($totals['avg_profit_per_order']) }}</p>
                 <p class="mt-1 text-xs text-muted">Net profit divided by successful orders.</p>
+            </div>
+        </div>
+
+        {{-- Shipping & courier money --}}
+        <div class="mt-6 rounded-2xl border border-line bg-surface shadow-sm shadow-ink/[0.02]">
+            <div class="flex flex-col gap-1 border-b border-line p-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <div>
+                    <h2 class="text-sm font-semibold text-ink">Shipping &amp; courier money</h2>
+                    <p class="mt-0.5 text-xs text-muted">Courier fees and COD cash inside this period, captured from manual entries, courier API syncs and Shopify fulfillments.</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-px bg-line sm:grid-cols-3">
+                <div class="bg-surface p-5">
+                    <p class="text-sm font-medium text-muted">Courier cost</p>
+                    <p class="mt-3 text-2xl font-semibold tracking-tight text-negative tabular-nums">
+                        @if (($totals['shipping_cost'] ?? 0) > 0) − @endif{{ $money($totals['shipping_cost'] ?? 0) }}
+                    </p>
+                    <p class="mt-1 text-xs text-muted">What we paid couriers. Deducted from net profit.</p>
+                    @if (($totals['shipping_estimated_cost'] ?? 0) > 0)
+                        <p class="mt-1 text-xs text-muted">
+                            {{ $money($totals['shipping_actual_cost'] ?? 0) }} actual +
+                            {{ $money($totals['shipping_estimated_cost'] ?? 0) }} estimated from rate cards
+                        </p>
+                    @endif
+                </div>
+                <div class="bg-surface p-5">
+                    <p class="text-sm font-medium text-muted">COD collected</p>
+                    <p class="mt-3 text-2xl font-semibold tracking-tight text-positive tabular-nums">
+                        @if (($totals['cod_collected'] ?? 0) > 0) + @endif{{ $money($totals['cod_collected'] ?? 0) }}
+                    </p>
+                    <p class="mt-1 text-xs text-muted">Cash received on delivered parcels. Shown as cash, separate from product revenue so it is never double counted.</p>
+                </div>
+                <div class="bg-surface p-5">
+                    <p class="text-sm font-medium text-muted">Net shipping</p>
+                    <p class="mt-3 text-2xl font-semibold tracking-tight tabular-nums {{ ($totals['shipping_net'] ?? 0) < 0 ? 'text-negative' : 'text-positive' }}">
+                        {{ $money($totals['shipping_net'] ?? 0) }}
+                    </p>
+                    <p class="mt-1 text-xs text-muted">COD collected minus courier cost.</p>
+                </div>
             </div>
         </div>
 
@@ -417,6 +457,8 @@
                                 <th class="py-3 pr-4 text-right font-medium">Revenue</th>
                                 <th class="py-3 pr-4 text-right font-medium">COGS</th>
                                 <th class="py-3 pr-4 text-right font-medium">Journal Adj.</th>
+                                <th class="py-3 pr-4 text-right font-medium">Ship. cost</th>
+                                <th class="py-3 pr-4 text-right font-medium">COD</th>
                                 <th class="py-3 pr-4 text-right font-medium">Net Profit</th>
                                 <th class="py-3 pr-4 text-right font-medium">Margin</th>
                             </tr>
@@ -430,6 +472,12 @@
                                     <td class="py-3 pr-4 text-right tabular-nums text-muted">{{ $money($row['cogs']) }}</td>
                                     <td class="py-3 pr-4 text-right tabular-nums {{ ($row['journal_net'] ?? 0) < 0 ? 'text-negative' : 'text-positive' }}">
                                         {{ ($row['journal_net'] ?? 0) >= 0 ? '+' : '−' }}{{ $money(abs($row['journal_net'] ?? 0)) }}
+                                    </td>
+                                    <td class="py-3 pr-4 text-right tabular-nums text-muted">
+                                        @if (($row['shipping_cost'] ?? 0) > 0) − @endif{{ $money($row['shipping_cost'] ?? 0) }}
+                                    </td>
+                                    <td class="py-3 pr-4 text-right tabular-nums text-muted">
+                                        @if (($row['cod_collected'] ?? 0) > 0) + @endif{{ $money($row['cod_collected'] ?? 0) }}
                                     </td>
                                     <td class="py-3 pr-4 text-right tabular-nums font-semibold {{ $row['profit'] >= 0 ? 'text-ink' : 'text-negative' }}">
                                         {{ $money($row['profit']) }}
@@ -465,10 +513,13 @@
                         <strong class="text-ink">Revenue</strong> is the sum of unit price × quantity across each order's line items.
                         <strong class="text-ink">COGS</strong> is the sum of product cost × quantity for those same items.
                         <strong class="text-ink">Gross profit</strong> = Revenue − COGS.
+                        <strong class="text-ink">Courier cost</strong> is the sum of each shipment's shipping cost
+                        (attributed to its shipping date). COD collected is cash received on delivered COD parcels and is
+                        reported separately so it never double counts revenue that was already recognised at sale time.
                         <strong class="text-ink">Journal entries</strong> (manual expenses and other income) recorded on the
                         <a href="{{ route('journal.index') }}" class="text-ink underline-offset-2 hover:underline">Journal</a> page are
                         posted as balanced double-entry lines and then folded in:
-                        <strong class="text-ink">Net profit</strong> = Gross profit − Manual expenses + Other income.
+                        <strong class="text-ink">Net profit</strong> = Gross profit − Courier cost − Manual expenses + Other income.
                     </p>
                 </div>
             </div>

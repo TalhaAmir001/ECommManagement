@@ -61,6 +61,26 @@ class CourierProvider extends Model
     }
 
     /**
+     * Delivery zones defined for this provider's rate card.
+     *
+     * @return HasMany<CourierZone, $this>
+     */
+    public function zones(): HasMany
+    {
+        return $this->hasMany(CourierZone::class);
+    }
+
+    /**
+     * Rate matrix cells for this provider.
+     *
+     * @return HasMany<CourierRate, $this>
+     */
+    public function rates(): HasMany
+    {
+        return $this->hasMany(CourierRate::class);
+    }
+
+    /**
      * Whether this provider can perform a given capability.
      */
     public function can(Capability $capability): bool

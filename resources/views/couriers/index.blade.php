@@ -101,6 +101,11 @@
 
                             <td class="px-5 py-4">
                                 <div class="flex items-center justify-end gap-1">
+                                    <a href="{{ route('couriers.rates.index', $provider) }}"
+                                        class="rounded-md px-2 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-canvas hover:text-ink"
+                                        title="Configure delivery rates">
+                                        Rates
+                                    </a>
                                     <form method="POST" action="{{ route('courier-providers.sync', $provider) }}">
                                         @csrf
                                         <button type="submit"

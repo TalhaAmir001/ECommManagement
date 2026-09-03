@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\Courier\ShipmentStatus;
+use App\Services\Courier\DeliveryRateCalculator;
 use Database\Factories\ShipmentFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -89,5 +90,61 @@ class Shipment extends Model
     public function events(): HasMany
     {
         return $this->hasMany(ShipmentEvent::class)->orderBy('occurred_at');
+    }
+
+    /**
+     * The weight figure cost estimates should use: the actual recorded
+     * courier weight when present, otherwise the order-derived weight.
+     * This is what feeds the rate-card lookup.
+     */
+    public function effectiveWeightKg(): ?float
+    {
+        if ($this->weight_kg !== null && (float) $this->weight_kg > 0) {
+            return (float) $this->weight_kg;
+        }
+
+        return $this->derivedWeightKg();
+    }
+
+    /**
+     * Weight derived from the linked order's line items
+     * (quantity × product weight). Null when the shipment has no order, or
+     * when none of the order's products carry a weight yet.
+     */
+    public function derivedWeightKg(): ?float
+    {
+        return $this->order?->totalWeightKg();
+    }
+
+    /**
+     * The cost figure reports should use: the actual recorded courier cost
+     * when present, otherwise the provider's rate card estimate. This is
+     * what the Audit's courier-cost line aggregates.
+     */
+    public function effectiveCost(): ?float
+    {
+        if ($this->cost !== null) {
+            return (float) $this->cost;
+        }
+
+        return $this->estimatedCost();
+    }
+
+    /**
+     * Rate-card estimate only (ignores the recorded cost). Null when the
+     * provider has no matching zone/weight-band rate.
+     */
+    public function estimatedCost(): ?float
+    {
+        return app(DeliveryRateCalculator::class)->estimateForShipment($this);
+    }
+
+    /**
+     * Whether this shipment's effective cost came from a rate card rather
+     * than a real billed amount.
+     */
+    public function costIsEstimated(): bool
+    {
+        return $this->cost === null && $this->estimatedCost() !== null;
     }
 }
