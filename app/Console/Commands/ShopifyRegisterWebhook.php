@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Services\Shopify\ShopifyClient;
 use Illuminate\Console\Command;
+use Throwable;
 
 class ShopifyRegisterWebhook extends Command
 {
@@ -12,7 +13,7 @@ class ShopifyRegisterWebhook extends Command
                             {--topic= : Topic to register (e.g. orders/create)}
                             {--delete= : Webhook subscription ID to delete}';
 
-    protected $description = 'Register, list, or delete Shopify webhook subscriptions';
+    protected $description = 'Register (all configured order topics by default), list, or delete Shopify webhook subscriptions';
 
     public function __construct(private readonly ShopifyClient $client)
     {
@@ -26,38 +27,85 @@ class ShopifyRegisterWebhook extends Command
         }
 
         if ($this->option('delete')) {
-            return $this->deleteWebhook($this->option('delete'));
+            return $this->deleteWebhook((string) $this->option('delete'));
         }
 
         if ($this->option('topic')) {
-            return $this->registerWebhook($this->option('topic'));
+            return $this->registerWebhook((string) $this->option('topic'));
         }
 
-        $this->error('Please use --list, --topic=<topic>, or --delete=<id>');
-        return self::FAILURE;
+        return $this->registerAllConfigured();
+    }
+
+    /**
+     * Register every topic listed in config/shopify.php (order_topics).
+     * Idempotent — safe to re-run whenever the public callback URL changes
+     * (e.g. after a tunnel is restarted and SHOPIFY_APP_URL is updated).
+     */
+    private function registerAllConfigured(): int
+    {
+        $topics = array_values(array_filter(
+            array_map('trim', (array) config('shopify.order_topics', []))
+        ));
+
+        if ($topics === []) {
+            $this->error('No order topics are configured. Add them under order_topics in config/shopify.php, or pass --topic=<topic>.');
+            return self::FAILURE;
+        }
+
+        $failed = 0;
+
+        foreach ($topics as $topic) {
+            try {
+                if ($this->registerWebhook((string) $topic) !== self::SUCCESS) {
+                    $failed++;
+                }
+            } catch (Throwable $e) {
+                $failed++;
+                $this->error("[{$topic}] failed: {$e->getMessage()}");
+            }
+        }
+
+        if ($failed > 0) {
+            $this->error("{$failed} webhook topic(s) failed to register.");
+            return self::FAILURE;
+        }
+
+        $this->info('All configured order webhooks are registered.');
+        return self::SUCCESS;
+    }
+
+    /**
+     * Fetch the current webhook subscriptions from Shopify.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function existingSubscriptions(): array
+    {
+        $query = 'query { webhookSubscriptions(first: 100) { edges { node { id topic callbackUrl createdAt } } } }';
+        $data = $this->client->graphql($query);
+
+        return $data['webhookSubscriptions']['edges'] ?? [];
     }
 
     private function listWebhooks(): int
     {
         $this->info('Fetching webhook subscriptions...');
 
-        $query = 'query { webhookSubscriptions(first: 100) { edges { node { id topic callbackUrl createdAt } } } }';
-        $data = $this->client->graphql($query);
+        $subscriptions = $this->existingSubscriptions();
 
-        $subscriptions = $data['webhookSubscriptions']['edges'] ?? [];
-
-        if (empty($subscriptions)) {
+        if ($subscriptions === []) {
             $this->warn('No webhook subscriptions found.');
             return self::SUCCESS;
         }
 
         $this->table(
             ['ID', 'Topic', 'Callback URL', 'Created'],
-            collect($subscriptions)->map(fn($e) => [
-                $e['node']['id'],
-                $e['node']['topic'],
-                $e['node']['callbackUrl'],
-                $e['node']['createdAt'],
+            collect($subscriptions)->map(static fn (array $edge): array => [
+                $edge['node']['id'],
+                $edge['node']['topic'],
+                $edge['node']['callbackUrl'],
+                $edge['node']['createdAt'],
             ])
         );
 
@@ -75,7 +123,38 @@ class ShopifyRegisterWebhook extends Command
 
         $callbackUrl = $baseUrl.'/webhooks/shopify/'.$topic;
 
+        // Shopify's GraphQL WebhookSubscriptionTopic enum uses UPPER_SNAKE_CASE
+        // (e.g. ORDERS_CREATE), while topics are conventionally written as
+        // REST-style resource/action (e.g. orders/create).
+        $enumTopic = strtoupper(str_replace('/', '_', $topic));
+
         $this->info("Registering webhook for topic [{$topic}] at [{$callbackUrl}]...");
+
+        // Idempotency: re-running after the callback URL changed (e.g. a new
+        // tunnel URL) must replace the stale subscription instead of leaving a
+        // duplicate that Shopify keeps sending to the dead address.
+        $alreadyRegistered = false;
+
+        foreach ($this->existingSubscriptions() as $edge) {
+            $subscription = $edge['node'] ?? [];
+
+            if (($subscription['topic'] ?? null) !== $enumTopic) {
+                continue;
+            }
+
+            if (($subscription['callbackUrl'] ?? null) === $callbackUrl) {
+                $alreadyRegistered = true;
+                $this->info("Webhook [{$enumTopic}] is already registered at {$callbackUrl}.");
+                continue;
+            }
+
+            $this->warn("Found stale webhook [{$enumTopic}] pointing at {$subscription['callbackUrl']}; deleting it so it can be re-registered...");
+            $this->deleteWebhook((string) $subscription['id']);
+        }
+
+        if ($alreadyRegistered) {
+            return self::SUCCESS;
+        }
 
         $mutation = 'mutation webhookSubscriptionCreate($topic: WebhookSubscriptionTopic!, $callbackUrl: URL!) {'
             .' webhookSubscriptionCreate(topic: $topic, webhookSubscription: {'
@@ -88,10 +167,7 @@ class ShopifyRegisterWebhook extends Command
             .'}';
 
         $data = $this->client->graphql($mutation, [
-            // Shopify's GraphQL WebhookSubscriptionTopic enum uses UPPER_SNAKE_CASE
-            // (e.g. ORDERS_CREATE), while topics are conventionally written as
-            // REST-style resource/action (e.g. orders/create).
-            'topic' => strtoupper(str_replace('/', '_', $topic)),
+            'topic' => $enumTopic,
             'callbackUrl' => $callbackUrl,
         ]);
 

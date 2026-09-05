@@ -238,6 +238,57 @@ class ShopifySyncTest extends TestCase
         ]);
     }
 
+    public function test_it_persists_the_orders_shipping_address(): void
+    {
+        $this->fakeShopify([
+            'orders' => [
+                'pageInfo' => ['hasNextPage' => false, 'endCursor' => null],
+                'edges' => [
+                    ['node' => [
+                        'id' => 'gid://shopify/Order/101',
+                        'name' => '#1002',
+                        'createdAt' => '2026-07-16T08:30:00Z',
+                        'displayFinancialStatus' => 'PAID',
+                        'displayFulfillmentStatus' => 'UNFULFILLED',
+                        'totalPriceSet' => ['shopMoney' => ['amount' => '25.00']],
+                        'customer' => [
+                            'id' => 'gid://shopify/Customer/2',
+                            'displayName' => 'John Smith',
+                            'email' => 'john@example.com',
+                            'createdAt' => '2026-07-01T10:00:00Z',
+                            'defaultAddress' => ['country' => 'Pakistan'],
+                        ],
+                        'shippingAddress' => [
+                            'name' => 'John Smith',
+                            'address1' => 'House 12, Street 5',
+                            'address2' => 'F-8',
+                            'city' => 'Islamabad',
+                            'province' => 'Islamabad Capital Territory',
+                            'zip' => '44000',
+                            'country' => 'Pakistan',
+                            'phone' => '+92 300 1234567',
+                        ],
+                        'lineItems' => ['edges' => []],
+                    ]],
+                ],
+            ],
+        ]);
+
+        app(ShopifySync::class)->syncOrders();
+
+        $this->assertDatabaseHas('orders', [
+            'shopify_id' => 'gid://shopify/Order/101',
+            'shipping_name' => 'John Smith',
+            'shipping_address1' => 'House 12, Street 5',
+            'shipping_address2' => 'F-8',
+            'shipping_city' => 'Islamabad',
+            'shipping_province' => 'Islamabad Capital Territory',
+            'shipping_zip' => '44000',
+            'shipping_country' => 'Pakistan',
+            'shipping_phone' => '+92 300 1234567',
+        ]);
+    }
+
     public function test_it_maps_refunded_orders_to_cancelled_and_handles_guests(): void
     {
         $this->fakeShopify([
@@ -394,6 +445,15 @@ class ShopifySyncTest extends TestCase
                             'defaultAddress' => ['country' => 'Pakistan'],
                         ],
                         'lineItems' => ['edges' => []],
+                        'shippingAddress' => [
+                            'name' => 'Jane Doe',
+                            'address1' => 'House 1, Gulberg',
+                            'address2' => null,
+                            'city' => 'Lahore',
+                            'province' => null,
+                            'zip' => '54000',
+                            'country' => 'Pakistan',
+                        ],
                         'fulfillments' => [
                             [
                                 'id' => 'gid://shopify/Fulfillment/9001',
@@ -436,6 +496,11 @@ class ShopifySyncTest extends TestCase
         $this->assertSame('Warehouse 1', $shipment->consignor_address);
         $this->assertSame('Karachi', $shipment->consignor_city);
         $this->assertNull($shipment->consignor_name, 'FulfillmentOriginAddress has no name field');
+
+        // Consignee details now come from the order's stored shipping address.
+        $this->assertSame('Jane Doe', $shipment->consignee_name);
+        $this->assertSame('House 1, Gulberg', $shipment->consignee_address);
+        $this->assertSame('Lahore', $shipment->consignee_city);
     }
 
     public function test_it_marks_a_fulfillment_as_delivered_when_shopify_has_a_delivered_at(): void

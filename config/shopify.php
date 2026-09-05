@@ -42,7 +42,7 @@ return [
     */
 
     'scopes' => array_values(array_filter(
-        array_map('trim', explode(',', (string) env('SHOPIFY_SCOPES', 'read_products,read_orders,read_customers,read_inventory')))
+        array_map('trim', explode(',', (string) env('SHOPIFY_SCOPES', 'read_products,read_orders,read_customers,read_inventory,write_fulfillments')))
     )),
 
     /*

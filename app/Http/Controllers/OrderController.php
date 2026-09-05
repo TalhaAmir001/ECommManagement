@@ -7,6 +7,7 @@ use App\Models\CourierProvider as CourierProviderModel;
 use App\Models\Order;
 use App\Models\Shipment;
 use App\Models\ShipmentEvent;
+use App\Services\Shopify\ShopifyTrackingService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -43,6 +44,18 @@ class OrderController extends Controller
     private const SORTABLE_COLUMNS = ['number', 'created_at', 'total'];
 
     /**
+     * Choices offered by the table's "Rows per page" control.
+     *
+     * @var list<int>
+     */
+    private const PER_PAGE_OPTIONS = [10, 20, 50, 100];
+
+    /**
+     * Default page size when no explicit per_page is given.
+     */
+    private const DEFAULT_PER_PAGE = 20;
+
+    /**
      * Show the Shopify-style orders list.
      */
     public function index(Request $request): View
@@ -65,12 +78,19 @@ class OrderController extends Controller
 
         $stats = $this->buildStats($query);
 
-        $orders = $query->paginate(20)->withQueryString();
+        $perPage = (int) $request->query('per_page', self::DEFAULT_PER_PAGE);
+        if (! in_array($perPage, self::PER_PAGE_OPTIONS, true)) {
+            $perPage = self::DEFAULT_PER_PAGE;
+        }
+
+        $orders = $query->paginate($perPage)->withQueryString();
 
         return view('orders.index', [
             'orders' => $orders,
             'stats' => $stats,
             'filters' => $request->query(),
+            'perPage' => $perPage,
+            'perPageOptions' => self::PER_PAGE_OPTIONS,
             'paymentStatuses' => self::PAYMENT_STATUSES,
             'fulfillmentStatuses' => self::FULFILLMENT_STATUSES,
             'allProviders' => CourierProviderModel::query()
@@ -83,7 +103,14 @@ class OrderController extends Controller
     public function updates(Request $request): JsonResponse
     {
         $since = $request->query('since');
-        $latest = $this->latestUpdatedAt();
+
+        // Only orders matching the currently active filters count: a change
+        // to an order outside the search/filter must not flip "changed" and
+        // pull unrelated rows into a filtered view.
+        $query = Order::query();
+        $this->applyFilters($query, $request);
+
+        $latest = $this->latestUpdatedAt($query);
 
         $changed = false;
         if ($since !== null && $latest !== null) {
@@ -107,9 +134,17 @@ class OrderController extends Controller
     {
         $since = $request->query('since');
 
+        // Apply the same filters as index() so a poll can never inject rows
+        // that don't belong to the current search/filter.
+        $base = Order::query();
+        $this->applyFilters($base, $request);
+        $latestUpdatedAt = $this->latestUpdatedAt($base);
+
         $query = Order::query()
             ->with('customer')
             ->withCount('items');
+
+        $this->applyFilters($query, $request);
 
         if ($since !== null) {
             try {
@@ -136,8 +171,6 @@ class OrderController extends Controller
                 'html' => view('orders._row', ['order' => $order, 'allProviders' => $providersForRows])->render(),
             ];
         }
-
-        $latestUpdatedAt = $this->latestUpdatedAt();
 
         return response()->json([
             'rows' => $rows,
@@ -192,6 +225,11 @@ class OrderController extends Controller
             'description' => 'Tracking number added from order '.$order->number,
         ]);
 
+        // Mirror the tracking number back onto the Shopify order so the
+        // store's fulfillment reflects it. The service logs failures and
+        // never throws, so a Shopify hiccup can't roll back the local row.
+        app(ShopifyTrackingService::class)->pushTracking($shipment);
+
         return redirect()->route('shipments.show', $shipment)
             ->with('status', 'Tracking number added to order '.$order->number.'.');
     }
@@ -233,9 +271,9 @@ class OrderController extends Controller
      * (or null when there are no orders). Eloquent aggregate methods return
      * a raw database string, so the value must be cast before use.
      */
-    private function latestUpdatedAt(): ?Carbon
+    private function latestUpdatedAt(?Builder $query = null): ?Carbon
     {
-        $latest = Order::query()->max('updated_at');
+        $latest = ($query ?? Order::query())->max('updated_at');
 
         if ($latest === null) {
             return null;

@@ -100,51 +100,12 @@
             </div>
         @endif
 
-        {{-- Filter toolbar --}}
-        <div class="mt-4 rounded-2xl border border-line bg-surface shadow-sm shadow-ink/[0.02]">
-            <form method="GET" action="{{ route('shipments.index') }}" class="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
-                <div class="relative w-full lg:max-w-xs">
-                    <span class="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-faint">
-                        <x-dashboard.icon name="search" class="h-4 w-4" />
-                    </span>
-                    <input type="search" name="q" value="{{ $currentSearch }}"
-                        placeholder="Search tracking #, order #, phone…"
-                        class="w-full rounded-lg border border-line bg-canvas py-2.5 pl-10 pr-9 text-sm text-ink placeholder:text-faint transition-shadow focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
-                </div>
-
-                <div class="flex flex-wrap items-center gap-2 lg:ml-auto">
-                    <select name="provider" class="rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
-                        <option value="">All providers</option>
-                        @foreach ($providers as $provider)
-                            <option value="{{ $provider->key }}" @selected($currentProvider === $provider->key)>{{ $provider->display_name }}</option>
-                        @endforeach
-                    </select>
-
-                    <select name="status" class="rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
-                        <option value="">All statuses</option>
-                        @foreach ($statuses as $status)
-                            <option value="{{ $status->value }}" @selected($currentStatus === $status->value)>{{ $status->label() }}</option>
-                        @endforeach
-                    </select>
-
-                    <select name="date" class="rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
-                        <option value="">All time</option>
-                        <option value="today" @selected($currentDate === 'today')>Today</option>
-                        <option value="7d" @selected($currentDate === '7d')>Last 7 days</option>
-                        <option value="30d" @selected($currentDate === '30d')>Last 30 days</option>
-                    </select>
-
-                    <button type="submit" class="rounded-lg bg-ink px-3.5 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Apply</button>
-                </div>
-            </form>
-        </div>
-
         {{-- Manual new-shipment form (collapsible) --}}
         @if (request('show_form') === 'create')
             <div class="mt-4 rounded-2xl border border-line bg-surface p-5 shadow-sm shadow-ink/[0.02]">
                 <div class="flex items-center justify-between">
                     <h2 class="text-sm font-semibold text-ink">New manual shipment</h2>
-                    <a href="{{ route('shipments.index', $filters) }}" class="text-xs text-muted transition-colors hover:text-ink">Cancel</a>
+                    <a href="{{ route('shipments.index', collect($filters)->except('show_form')->all()) }}" class="text-xs text-muted transition-colors hover:text-ink">Cancel</a>
                 </div>
                 <form method="POST" action="{{ route('shipments.store') }}" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" data-shipment-form>
                     @csrf
@@ -201,10 +162,6 @@
                         </div>
                     </div>
                     <div>
-                        <label class="mb-1.5 block text-xs font-medium text-muted">Reference (order #)</label>
-                        <input name="reference" value="{{ old('reference') }}" data-order-picker-reference class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
-                    </div>
-                    <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Initial status</label>
                         <select name="status" class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
                             @foreach ($statuses as $status)
@@ -219,6 +176,10 @@
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Consignee phone</label>
                         <input name="consignee_phone" data-order-picker-phone class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                    </div>
+                    <div>
+                        <label class="mb-1.5 block text-xs font-medium text-muted">Consignee email</label>
+                        <input name="consignee_email" value="{{ old('consignee_email') }}" class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
                     </div>
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">Consignee city</label>
@@ -250,6 +211,45 @@
                 </form>
             </div>
         @endif
+
+        {{-- Filter toolbar --}}
+        <div class="mt-4 rounded-2xl border border-line bg-surface shadow-sm shadow-ink/[0.02]">
+            <form method="GET" action="{{ route('shipments.index') }}" class="flex flex-col gap-3 p-4 lg:flex-row lg:items-center">
+                <div class="relative w-full lg:max-w-xs">
+                    <span class="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-faint">
+                        <x-dashboard.icon name="search" class="h-4 w-4" />
+                    </span>
+                    <input type="search" name="q" value="{{ $currentSearch }}"
+                        placeholder="Search tracking #, order #, phone…"
+                        class="w-full rounded-lg border border-line bg-canvas py-2.5 pl-10 pr-9 text-sm text-ink placeholder:text-faint transition-shadow focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2 lg:ml-auto">
+                    <select name="provider" class="rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
+                        <option value="">All providers</option>
+                        @foreach ($providers as $provider)
+                            <option value="{{ $provider->key }}" @selected($currentProvider === $provider->key)>{{ $provider->display_name }}</option>
+                        @endforeach
+                    </select>
+
+                    <select name="status" class="rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
+                        <option value="">All statuses</option>
+                        @foreach ($statuses as $status)
+                            <option value="{{ $status->value }}" @selected($currentStatus === $status->value)>{{ $status->label() }}</option>
+                        @endforeach
+                    </select>
+
+                    <select name="date" class="rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
+                        <option value="">All time</option>
+                        <option value="today" @selected($currentDate === 'today')>Today</option>
+                        <option value="7d" @selected($currentDate === '7d')>Last 7 days</option>
+                        <option value="30d" @selected($currentDate === '30d')>Last 30 days</option>
+                    </select>
+
+                    <button type="submit" class="rounded-lg bg-ink px-3.5 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Apply</button>
+                </div>
+            </form>
+        </div>
 
         {{-- Flash message --}}
         @if (session('status'))

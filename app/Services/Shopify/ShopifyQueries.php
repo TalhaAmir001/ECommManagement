@@ -37,7 +37,25 @@ final class ShopifyQueries
                 displayName
                 email
                 createdAt
-                defaultAddress { country }
+                defaultAddress {
+                    address1
+                    address2
+                    city
+                    province
+                    zip
+                    country
+                    phone
+                }
+            }
+            shippingAddress {
+                name
+                address1
+                address2
+                city
+                province
+                zip
+                country
+                phone
             }
             lineItems(first: 250) {
                 edges {

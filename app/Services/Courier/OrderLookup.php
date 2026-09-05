@@ -86,9 +86,12 @@ class OrderLookup
      * Each result also carries a `link_status` of "linked" / "unlinked"
      * — whether the order already has any shipment attached. The UI
      * uses this to label results so operators can spot unfulfilled
-     * orders quickly.
+     * orders quickly. It also carries the order's derived `weight_kg`,
+     * `pieces` (total item quantity) and the customer consignee fields
+     * (name/phone/email) so the new-shipment form can pre-fill those
+     * inputs when an order is picked.
      *
-     * @return list<array{id: int, number: string, customer: ?string, city: ?string, total: float, status: ?string, fulfillment: ?string, link_status: string}>
+     * @return list<array{id: int, number: string, customer: ?string, city: ?string, total: float, status: ?string, fulfillment: ?string, link_status: string, weight_kg: ?float, pieces: int, consignee_name: ?string, consignee_phone: ?string, consignee_email: ?string, consignee_city: ?string, consignee_address: ?string, cod_amount: ?float}>
      */
     public function suggest(string $query, ?int $excludeId = null): array
     {
@@ -101,7 +104,7 @@ class OrderLookup
         $cutoff = now()->subDays(self::LOOKBACK_DAYS);
 
         $builder = Order::query()
-            ->with('customer')
+            ->with(['customer', 'items.product'])
             ->where('created_at', '>=', $cutoff)
             ->where(function (Builder $q) use ($like) {
                 $q->where('number', 'like', $like)
@@ -134,15 +137,31 @@ class OrderLookup
 
         return $orders
             ->map(function (Order $order) use ($linkedSet) {
+                $consigneeAddress = implode(', ', array_filter([
+                    $order->shipping_address1,
+                    $order->shipping_address2,
+                ])) ?: null;
+
                 return [
                     'id' => (int) $order->id,
                     'number' => (string) $order->number,
                     'customer' => $order->customer?->name,
-                    'city' => $order->customer?->country,
+                    'city' => $order->shipping_city ?: $order->customer?->country,
                     'total' => (float) $order->total,
                     'status' => $order->status,
                     'fulfillment' => $order->fulfillment_status,
                     'link_status' => isset($linkedSet[(int) $order->id]) ? 'linked' : 'unlinked',
+                    'weight_kg' => $order->totalWeightKg(),
+                    'pieces' => $order->totalItemQuantity(),
+                    'consignee_name' => $order->shipping_name ?: $order->customer?->name,
+                    'consignee_phone' => $order->shipping_phone ?: $order->customer?->phone,
+                    'consignee_email' => $order->customer?->email,
+                    'consignee_city' => $order->shipping_city ?: $order->customer?->country,
+                    'consignee_address' => $consigneeAddress,
+                    // COD amount = order total when unpaid (cash to collect on delivery).
+                    'cod_amount' => strtoupper((string) $order->financial_status) === 'PENDING' && (float) $order->total > 0
+                        ? (float) $order->total
+                        : null,
                 ];
             })
             ->all();
@@ -158,9 +177,12 @@ class OrderLookup
      * Returns at most `MAX_RESULTS` candidates, sorted by recency.
      *
      * Each result also carries a `link_status` of "linked" / "unlinked"
-     * so the UI can label whether the order already has a shipment.
+     * so the UI can label whether the order already has a shipment, plus
+     * the order's derived `weight_kg`, `pieces` (total item quantity)
+     * and the customer consignee fields (name/phone/email) so the
+     * new-shipment form can pre-fill those inputs when picked.
      *
-     * @return list<array{id: int, number: string, customer: ?string, reason: string, link_status: string}>
+     * @return list<array{id: int, number: string, customer: ?string, reason: string, link_status: string, weight_kg: ?float, pieces: int, consignee_name: ?string, consignee_phone: ?string, consignee_email: ?string, consignee_city: ?string, consignee_address: ?string}>
      */
     public function suggestForNewShipment(?string $reference, ?string $consigneePhone): array
     {
@@ -225,6 +247,57 @@ class OrderLookup
 
         foreach ($candidates as $i => $c) {
             $candidates[$i]['link_status'] = isset($linkedSet[(int) $c['id']]) ? 'linked' : 'unlinked';
+        }
+
+        return $this->attachOrderStats($candidates);
+    }
+
+    /**
+     * Attach the derived shipment defaults (`weight_kg` and `pieces`) to a
+     * list of candidate orders so the new-shipment form can pre-fill them
+     * when one of these orders is picked.
+     *
+     * Candidates only carry ids/numbers, so the orders (with their line
+     * items and products) are loaded once here instead of per candidate.
+     *
+     * @param  list<array<string, mixed>>  $candidates
+     * @return list<array<string, mixed>>
+     */
+    private function attachOrderStats(array $candidates): array
+    {
+        if ($candidates === []) {
+            return [];
+        }
+
+        $orders = Order::query()
+            ->with(['customer', 'items.product'])
+            ->whereIn('id', array_map('intval', array_column($candidates, 'id')))
+            ->get()
+            ->keyBy('id');
+
+        foreach ($candidates as $i => $candidate) {
+            $order = $orders->get((int) $candidate['id']);
+
+            $candidates[$i]['weight_kg'] = $order?->totalWeightKg();
+            $candidates[$i]['pieces'] = $order !== null ? $order->totalItemQuantity() : 0;
+            $candidates[$i]['consignee_name'] = $order?->shipping_name ?: $order?->customer?->name;
+            $candidates[$i]['consignee_phone'] = $order?->shipping_phone ?: $order?->customer?->phone;
+            $candidates[$i]['consignee_email'] = $order?->customer?->email;
+            $candidates[$i]['consignee_city'] = $order?->shipping_city ?: $order?->customer?->country;
+            $candidates[$i]['consignee_address'] = $order !== null
+                ? (implode(', ', array_filter([
+                    $order->shipping_address1,
+                    $order->shipping_address2,
+                ])) ?: null)
+                : null;
+            // COD amount = the order total when the order is still unpaid
+            // (cash to collect on delivery). Paid/refunded orders have
+            // nothing left to collect, so the shipment defaults to no COD.
+            $candidates[$i]['cod_amount'] = $order !== null
+                && strtoupper((string) $order->financial_status) === 'PENDING'
+                && (float) $order->total > 0
+                ? (float) $order->total
+                : null;
         }
 
         return $candidates;

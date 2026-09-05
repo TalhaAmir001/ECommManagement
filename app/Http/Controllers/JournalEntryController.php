@@ -11,6 +11,7 @@ use App\Services\JournalService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\View\View;
 
 class JournalEntryController extends Controller
@@ -80,7 +81,9 @@ class JournalEntryController extends Controller
     public function create(): View
     {
         return view('journal.create', [
-            'categories' => JournalCategory::active()->orderBy('name')->get()->groupBy('type'),
+            // Normalize so the form can always rely on both type keys
+            // existing, even when no category of a type is active yet.
+            'categories' => $this->categoriesByType(),
             'paymentAccounts' => JournalAccount::active()->paymentAccounts()->orderBy('name')->get(),
             'nextReference' => $this->journal->generateReference(),
         ]);
@@ -125,7 +128,7 @@ class JournalEntryController extends Controller
 
         return view('journal.edit', [
             'entry' => $entry,
-            'categories' => JournalCategory::active()->orderBy('name')->get()->groupBy('type'),
+            'categories' => $this->categoriesByType(),
             'paymentAccounts' => JournalAccount::active()->paymentAccounts()->orderBy('name')->get(),
             'paymentAccountId' => $paymentAccountId,
         ]);
@@ -178,5 +181,20 @@ class JournalEntryController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Active categories grouped by type (expense | income), with empty
+     * placeholder groups merged in so both keys always exist. Without this,
+     * the grouped collection only contains keys for types that have at least
+     * one active category, and an unguarded `$categories['expense']` in the
+     * shared form crashes the page when no expense category is configured.
+     *
+     * @return Collection<int, Collection<int, JournalCategory>>
+     */
+    private function categoriesByType(): Collection
+    {
+        return collect(['expense' => collect(), 'income' => collect()])
+            ->merge(JournalCategory::active()->orderBy('name')->get()->groupBy('type'));
     }
 }

@@ -6,6 +6,7 @@ use App\Enums\Courier\ShipmentStatus;
 use App\Models\CourierProvider;
 use App\Models\Customer;
 use App\Models\Order;
+use App\Models\Product;
 use App\Models\Shipment;
 use Database\Seeders\CourierProvidersSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -78,6 +79,47 @@ class ShipmentOrderAssociationTest extends TestCase
         $response = $this->getJson('/shipments/lookup-orders?q=1234');
         $response->assertOk();
         $response->assertJsonPath('results.0.number', '#1234');
+    }
+
+    public function test_lookup_endpoint_includes_derived_weight_and_pieces(): void
+    {
+        $order = $this->makeOrder(['number' => '#W1001']);
+        $order->customer->forceFill(['email' => 'consignee@example.com'])->save();
+        $order->forceFill([
+            'shipping_address1' => 'Street 1, Gulberg',
+            'shipping_city' => 'Lahore',
+        ])->save();
+
+        $shirt = Product::factory()->create(['weight_kg' => 0.5]);
+        $cap = Product::factory()->create(['weight_kg' => 0.25]);
+
+        $order->items()->create(['product_id' => $shirt->id, 'quantity' => 2, 'unit_price' => 10]);
+        $order->items()->create(['product_id' => $cap->id, 'quantity' => 1, 'unit_price' => 10]);
+
+        $this->getJson('/shipments/lookup-orders?q=W1001')
+            ->assertOk()
+            ->assertJsonPath('results.0.number', '#W1001')
+            ->assertJsonPath('results.0.weight_kg', 1.25)
+            ->assertJsonPath('results.0.pieces', 3)
+            ->assertJsonPath('results.0.consignee_name', 'Ali Khan')
+            ->assertJsonPath('results.0.consignee_phone', '03001234567')
+            ->assertJsonPath('results.0.consignee_email', 'consignee@example.com')
+            ->assertJsonPath('results.0.consignee_city', 'Lahore')
+            ->assertJsonPath('results.0.consignee_address', 'Street 1, Gulberg');
+    }
+
+    public function test_lookup_endpoint_via_reference_includes_derived_defaults(): void
+    {
+        $order = $this->makeOrder(['number' => '#W1002']);
+
+        $product = Product::factory()->create(['weight_kg' => 2.0]);
+        $order->items()->create(['product_id' => $product->id, 'quantity' => 4, 'unit_price' => 10]);
+
+        $this->getJson('/shipments/lookup-orders?reference=%23W1002')
+            ->assertOk()
+            ->assertJsonPath('results.0.number', '#W1002')
+            ->assertJsonPath('results.0.weight_kg', 8)
+            ->assertJsonPath('results.0.pieces', 4);
     }
 
     public function test_lookup_endpoint_suggests_by_phone_when_only_phone_provided(): void

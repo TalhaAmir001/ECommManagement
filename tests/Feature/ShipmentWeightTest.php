@@ -38,6 +38,14 @@ class ShipmentWeightTest extends TestCase
         $this->assertSame(1.25, $order->totalWeightKg());
     }
 
+    public function test_order_total_item_quantity_sums_line_quantities(): void
+    {
+        $order = $this->orderWithItems([[0.5, 2], [0.25, 1]]);
+
+        // 2× shirt + 1× cap → 3 units (the default "pieces" figure).
+        $this->assertSame(3, $order->totalItemQuantity());
+    }
+
     public function test_order_without_product_weights_has_no_total_weight(): void
     {
         $order = $this->orderWithItems([[null, 1]]);

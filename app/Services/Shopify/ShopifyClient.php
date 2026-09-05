@@ -207,6 +207,8 @@ class ShopifyClient
 
     /**
      * Throw a RuntimeException when an HTTP response is not successful.
+     * The response body is included (truncated) so scope / validation
+     * failures are visible in logs instead of a bare status code.
      *
      * @throws RuntimeException
      */
@@ -216,6 +218,9 @@ class ShopifyClient
             return;
         }
 
-        throw new RuntimeException(sprintf('%s (HTTP %d)', $message, $response->status()));
+        $body = trim((string) $response->body());
+        $detail = $body !== '' ? ': '.mb_substr($body, 0, 500) : '';
+
+        throw new RuntimeException(sprintf('%s (HTTP %d)%s', $message, $response->status(), $detail));
     }
 }

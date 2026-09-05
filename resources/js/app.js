@@ -119,9 +119,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // The active filters (q, payment, fulfillment, status, date, …) are
+    // embedded on the anchor so live-poll requests stay scoped to the
+    // current view. Without this, /orders/rows would keep injecting orders
+    // that don't belong in a search/filtered table.
+    function readPollFilters() {
+        try {
+            return JSON.parse(anchor.dataset.filters || '{}');
+        } catch (err) {
+            return {};
+        }
+    }
+
+    function buildPollQuery(extra) {
+        const params = Object.assign({}, readPollFilters(), extra);
+        return Object.keys(params)
+            .filter((key) => params[key] !== '' && params[key] !== null && params[key] !== undefined)
+            .map((key) => encodeURIComponent(key) + '=' + encodeURIComponent(params[key]))
+            .join('&');
+    }
+
     async function poll() {
         const since = anchor.dataset.since || '';
-        const url = pollUrl + (since ? '?since=' + encodeURIComponent(since) : '');
+        const query = buildPollQuery({ since });
+        const url = pollUrl + (query !== '' ? '?' + query : '');
 
         try {
             const res = await axios.get(url);
@@ -129,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!data.changed) return;
 
-            const rowsRes = await axios.get(rowsUrl + '?since=' + encodeURIComponent(since));
+            const rowsRes = await axios.get(rowsUrl + '?' + query);
             applyRows(rowsRes.data.rows);
 
             if (rowsRes.data.latest_updated_at) {
@@ -227,10 +248,51 @@ document.addEventListener('DOMContentLoaded', () => {
         let activeIndex = -1;
         let currentItems = [];
 
+        // The new-shipment form exposes weight & pieces inputs next to the
+        // picker; other pickers (the shipment-link form on the show/row
+        // pickers) don't, so these stay null there and this block is a
+        // no-op. When an order is picked we pre-fill the derived defaults.
+        const shipmentForm = root.closest('form');
+        const weightInput = shipmentForm ? shipmentForm.querySelector('[name="weight_kg"]') : null;
+        const piecesInput = shipmentForm ? shipmentForm.querySelector('[name="pieces"]') : null;
+        const codInput = shipmentForm ? shipmentForm.querySelector('[name="cod_amount"]') : null;
+
+        // Consignee inputs that can be pre-filled from the picked order's
+        // shipping address / customer record (only present on the
+        // new-shipment form).
+        const consigneeInputs = ['consignee_name', 'consignee_phone', 'consignee_email', 'consignee_city', 'consignee_address']
+            .map((name) => shipmentForm ? shipmentForm.querySelector('[name="' + name + '"]') : null)
+            .filter((el) => el !== null);
+
+        function markManual(input) {
+            if (input) input.dataset.autoFilled = '0';
+        }
+        [weightInput, piecesInput, codInput, ...consigneeInputs]
+            .filter((el) => el !== null)
+            .forEach((el) => el.addEventListener('input', () => markManual(el)));
+
+        // Fill a blank field — or one we auto-filled from a previously
+        // picked order — with a derived value. Anything the operator typed
+        // themselves is always respected and never overwritten.
+        function prefillDerived(input, value) {
+            if (!input) return;
+            const isAuto = input.dataset.autoFilled === '1';
+            const isEmpty = input.value === null || input.value === '';
+            if ((isEmpty || isAuto) && value !== null && value !== undefined && value !== '') {
+                input.value = value;
+                input.dataset.autoFilled = '1';
+            }
+        }
+
         function clearSelection() {
             hidden.value = '';
             summary.innerHTML = '<span class="text-faint">No order selected — the auto-matcher will try to link after creation.</span>';
             summary.classList.remove('border-accent', 'bg-accent-soft');
+            // Drop defaults we filled from the previously picked order so a
+            // cleared selection doesn't leave stale weight/pieces behind.
+            if (weightInput && weightInput.dataset.autoFilled === '1') weightInput.value = '';
+            if (piecesInput && piecesInput.dataset.autoFilled === '1') piecesInput.value = '';
+            if (codInput && codInput.dataset.autoFilled === '1') codInput.value = '';
         }
 
         function pickItem(item) {
@@ -251,12 +313,23 @@ document.addEventListener('DOMContentLoaded', () => {
             currentItems = [];
             activeIndex = -1;
 
-            // If the form has a reference field, pre-fill it with the
-            // order number. Operator can still override.
-            const refField = root.querySelector('[data-order-picker-reference]');
-            if (refField && (refField.value === null || refField.value === '')) {
-                refField.value = item.number;
-            }
+            // Pre-fill the consignee details we can pull from the picked
+            // order's customer record (name / phone / email). Blank or
+            // previously auto-filled inputs get overwritten; values the
+            // operator typed themselves are always respected.
+            consigneeInputs.forEach((input) => {
+                prefillDerived(input, item[input.getAttribute('name')]);
+            });
+
+            // Pre-fill the shipment's derived defaults (total order weight
+            // and total item quantity = pieces) into the new-shipment form.
+            prefillDerived(weightInput, item.weight_kg);
+            prefillDerived(piecesInput, item.pieces && item.pieces > 0 ? item.pieces : null);
+
+            // Pre-fill COD with the order's collectable total when the order
+            // is unpaid (a PENDING financial status). Blank or auto-filled
+            // inputs get overwritten; operator-typed values are respected.
+            prefillDerived(codInput, item.cod_amount);
         }
 
         function renderResults(items) {
@@ -306,16 +379,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const doSearch = debounce(async function () {
             const query = input.value.trim();
             const phoneField = root.querySelector('[data-order-picker-phone]');
-            const refField = root.querySelector('[data-order-picker-reference]');
             const params = {};
             if (query !== '') {
                 params.q = query;
             } else {
                 if (phoneField && phoneField.value.trim() !== '') {
                     params.consignee_phone = phoneField.value.trim();
-                }
-                if (refField && refField.value.trim() !== '') {
-                    params.reference = refField.value.trim();
                 }
             }
             if (Object.keys(params).length === 0) {

@@ -8,11 +8,17 @@
     data-shopify-id="{{ $order->shopify_id ?? '' }}"
     data-updated-at="{{ $order->updated_at?->toIso8601String() }}"
 >
-    <td class="py-3.5 pl-5 pr-2">
-        <input type="checkbox" class="h-4 w-4 rounded border-line-strong accent-ink" aria-label="Select {{ $order->number }}" />
-    </td>
-    <td class="py-3.5 pr-4">
-        <p class="font-semibold tabular-nums tracking-tight text-ink">{{ $order->number }}</p>
+    <td class="py-3.5 pl-5 pr-4">
+        @if ($order->shopifyAdminUrl())
+            <a href="{{ $order->shopifyAdminUrl() }}" target="_blank" rel="noopener noreferrer"
+                title="Open order in Shopify admin"
+                class="inline-flex items-center gap-1 font-semibold tabular-nums tracking-tight text-ink transition-colors hover:text-accent">
+                {{ $order->number }}
+                <x-dashboard.icon name="arrow-up-right" class="h-3.5 w-3.5 text-muted" />
+            </a>
+        @else
+            <p class="font-semibold tabular-nums tracking-tight text-ink">{{ $order->number }}</p>
+        @endif
     </td>
     <td class="whitespace-nowrap py-3.5 pr-4 tabular-nums text-muted">{{ $order->created_at->format('M j, Y · g:i A') }}</td>
     <td class="py-3.5 pr-4">
@@ -65,10 +71,14 @@
             <span class="text-xs text-faint">Not shipped</span>
         @endif
 
-        {{-- Quick actions. A <details> keeps the row tight when collapsed
-             and reveals the action form in-place when needed. Each form
-             posts to its own dedicated endpoint so the row can stay
-             focused on display, not editing. --}}
+        {{-- Quick actions. Only rendered for orders that don't have a
+             tracking number yet — once a shipment exists the row displays
+             the tracking column above, so adding/assigning no longer
+             applies. A <details> keeps the row tight when collapsed and
+             reveals the action form in-place when needed. Each form posts
+             to its own dedicated endpoint so the row can stay focused on
+             display, not editing. --}}
+        @if ($latestShipment === null)
         <details class="mt-2 text-xs" data-order-quick-actions>
             <summary class="inline-flex cursor-pointer list-none items-center gap-1 rounded-md border border-line bg-canvas px-2 py-0.5 font-medium text-muted transition-colors hover:text-ink">
                 <x-dashboard.icon name="plus" class="h-3 w-3" />
@@ -98,6 +108,7 @@
                 </form>
             </div>
         </details>
+        @endif
     </td>
     <td class="py-3.5 pr-4 text-right">
         <span class="font-semibold tabular-nums text-ink">{{ format_money((float) $order->total, 2) }}</span>

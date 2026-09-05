@@ -21,3 +21,4 @@ Need to get weights of actual shipments being delivered(do weight thing in a new
 MNP,Trax
 Commands:
 php artisan queue:work --queue=shopify-webhooks --tries=5 --sleep=3
+

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\ProcessShopifyOrderWebhook;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class ShopifyWebhookController extends Controller
@@ -19,8 +20,17 @@ class ShopifyWebhookController extends Controller
         $orderId = $payload['id'] ?? null;
 
         if ($orderId === null) {
+            Log::warning('ShopifyWebhookController: Received webhook without an order id', [
+                'topic' => $topic,
+            ]);
+
             return response()->noContent(400);
         }
+
+        Log::info('ShopifyWebhookController: Webhook received', [
+            'topic' => $topic,
+            'order_id' => $orderId,
+        ]);
 
         ProcessShopifyOrderWebhook::dispatch($orderId, $topic);
 
@@ -43,6 +53,12 @@ class ShopifyWebhookController extends Controller
         $expected = base64_encode(hash_hmac('sha256', $body, $secret, true));
 
         if (! hash_equals($expected, $provided)) {
+            Log::warning('ShopifyWebhookController: Invalid webhook signature', [
+                'topic' => (string) $request->route('topic'),
+                'provided' => $provided,
+                'expected' => $expected,
+            ]);
+
             abort(401, 'Invalid webhook signature.');
         }
     }

@@ -145,11 +145,11 @@
             <div class="mt-4 space-y-2 text-xs">
                 <div class="rounded-lg bg-canvas p-3">
                     <p class="font-semibold text-ink">Expense entry</p>
-                    <p class="mt-1 text-muted">Dr. <span data-preview-expense>{{ $categories['expense']->first()?->name ?? '—' }}</span> &nbsp;/&nbsp; Cr. <span data-preview-payment>{{ $paymentAccounts->first()?->name ?? 'Cash' }}</span></p>
+                    <p class="mt-1 text-muted">Dr. <span data-preview-expense>{{ ($categories['expense'] ?? collect())->first()?->name ?? '—' }}</span> &nbsp;/&nbsp; Cr. <span data-preview-payment>{{ $paymentAccounts->first()?->name ?? 'Cash' }}</span></p>
                 </div>
                 <div class="rounded-lg bg-canvas p-3">
                     <p class="font-semibold text-ink">Income entry</p>
-                    <p class="mt-1 text-muted">Dr. <span data-preview-payment>{{ $paymentAccounts->first()?->name ?? 'Cash' }}</span> &nbsp;/&nbsp; Cr. <span data-preview-income>{{ $categories['income']->first()?->name ?? '—' }}</span></p>
+                    <p class="mt-1 text-muted">Dr. <span data-preview-payment>{{ $paymentAccounts->first()?->name ?? 'Cash' }}</span> &nbsp;/&nbsp; Cr. <span data-preview-income>{{ ($categories['income'] ?? collect())->first()?->name ?? '—' }}</span></p>
                 </div>
             </div>
         </div>

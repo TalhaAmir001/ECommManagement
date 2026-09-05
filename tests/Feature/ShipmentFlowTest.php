@@ -9,6 +9,8 @@ use App\Services\Courier\CourierProviderRegistry;
 use App\Services\Courier\Exceptions\CapabilityUnsupportedException;
 use App\Services\Courier\Providers\ManualProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class ShipmentFlowTest extends TestCase
@@ -99,6 +101,28 @@ class ShipmentFlowTest extends TestCase
         }
     }
 
+    public function test_new_shipment_form_has_consignee_email_and_no_reference_field(): void
+    {
+        $this->get('/shipments?show_form=create')
+            ->assertOk()
+            ->assertSee('Consignee email')
+            ->assertDontSee('Reference (order #)');
+    }
+
+    public function test_new_shipment_form_persists_consignee_email(): void
+    {
+        $this->post('/shipments', [
+            'tracking_number' => 'NEW-EMAIL-1',
+            'consignee_name' => 'Ali Khan',
+            'consignee_phone' => '03001234567',
+            'consignee_email' => 'ali@example.com',
+        ])->assertRedirect();
+
+        $shipment = Shipment::query()->where('tracking_number', 'NEW-EMAIL-1')->firstOrFail();
+        $this->assertSame('ali@example.com', $shipment->consignee_email);
+        $this->assertSame('Ali Khan', $shipment->consignee_name);
+    }
+
     public function test_shipments_index_page_renders_with_manual_provider(): void
     {
         $this->makeShipment(['tracking_number' => 'MNP-INDEX-1']);
@@ -162,6 +186,82 @@ class ShipmentFlowTest extends TestCase
             ->assertOk()
             ->assertSee('#4001')
             ->assertSee('Not shipped');
+    }
+
+    public function test_cancel_link_hides_the_create_form_but_keeps_other_filters(): void
+    {
+        $this->get('/shipments?show_form=create&status=picked_up')
+            ->assertOk()
+            ->assertSee('New manual shipment')
+            // Cancel keeps the other filters (status) but drops show_form,
+            // so clicking it hides the form instead of reloading it.
+            ->assertSee(route('shipments.index', ['status' => 'picked_up']), false)
+            // The "New shipment" button still carries show_form=create (the
+            // href's "&" is HTML-escaped in the response, so e() is used).
+            ->assertSee(e(route('shipments.index', ['show_form' => 'create', 'status' => 'picked_up'])), false);
+    }
+
+    public function test_creating_a_shipment_pushes_a_real_tracking_number_to_shopify(): void
+    {
+        config()->set('shopify.shop', 'test-store');
+        config()->set('shopify.client_id', 'client-id');
+        config()->set('shopify.client_secret', 'client-secret');
+        config()->set('shopify.api_version', '2026-07');
+
+        Http::fake([
+            '*/admin/oauth/access_token' => Http::response(['access_token' => 'shpat_test', 'expires_in' => 3600], 200),
+            '*/fulfillments*' => Http::response(['fulfillments' => []]),
+        ]);
+
+        $customer = \App\Models\Customer::factory()->create();
+        $order = \App\Models\Order::factory()->create([
+            'customer_id' => $customer->id,
+            'number' => '#9001',
+            'shopify_id' => 'gid://shopify/Order/9001',
+        ]);
+
+        $this->post('/shipments', [
+            'tracking_number' => 'LP-TRACK-1',
+            'order_id' => $order->id,
+            'consignee_name' => 'Ali Khan',
+        ])->assertRedirect();
+
+        $this->assertDatabaseHas('shipments', [
+            'tracking_number' => 'LP-TRACK-1',
+            'order_id' => $order->id,
+        ]);
+
+        Http::assertSent(function (Request $request) {
+            return $request->method() === 'POST'
+                && str_ends_with($request->url(), '/admin/api/2026-07/orders/9001/fulfillments.json')
+                && $request['fulfillment']['tracking_number'] === 'LP-TRACK-1';
+        });
+    }
+
+    public function test_auto_generated_tracking_number_is_not_pushed_to_shopify(): void
+    {
+        config()->set('shopify.shop', 'test-store');
+        config()->set('shopify.client_id', 'client-id');
+        config()->set('shopify.client_secret', 'client-secret');
+        config()->set('shopify.api_version', '2026-07');
+
+        Http::fake();
+
+        $customer = \App\Models\Customer::factory()->create();
+        $order = \App\Models\Order::factory()->create([
+            'customer_id' => $customer->id,
+            'number' => '#9002',
+            'shopify_id' => 'gid://shopify/Order/9002',
+        ]);
+
+        // No tracking number submitted → store() auto-generates an MNL- one,
+        // which is a local placeholder and must never reach Shopify.
+        $this->post('/shipments', [
+            'order_id' => $order->id,
+            'consignee_name' => 'Ali Khan',
+        ])->assertRedirect();
+
+        Http::assertNothingSent();
     }
 
     private function resolveManual(): ManualProvider

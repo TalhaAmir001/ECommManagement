@@ -161,4 +161,46 @@ class OrderLookupTest extends TestCase
 
         $this->assertCount(1, $results);
     }
+
+    public function test_suggest_carries_cod_amount_for_unpaid_orders(): void
+    {
+        $this->makeOrder(['number' => '#COD1', 'total' => 2500.0, 'financial_status' => 'PENDING']);
+
+        $results = (new OrderLookup)->suggest('#COD1');
+
+        $this->assertCount(1, $results);
+        $this->assertSame(2500.0, $results[0]['cod_amount']);
+    }
+
+    public function test_suggest_carries_null_cod_amount_for_paid_orders(): void
+    {
+        $this->makeOrder(['number' => '#PAID1', 'total' => 2500.0, 'financial_status' => 'PAID']);
+
+        $results = (new OrderLookup)->suggest('#PAID1');
+
+        $this->assertCount(1, $results);
+        $this->assertNull($results[0]['cod_amount']);
+    }
+
+    public function test_suggest_prefers_shipping_phone_over_customer_phone(): void
+    {
+        $customer = $this->makeCustomer(['phone' => '03001234567']);
+        $this->makeOrder(['number' => '#PHONE1', 'customer_id' => $customer->id, 'shipping_phone' => '03111234567']);
+
+        $results = (new OrderLookup)->suggest('#PHONE1');
+
+        $this->assertCount(1, $results);
+        $this->assertSame('03111234567', $results[0]['consignee_phone']);
+    }
+
+    public function test_suggest_falls_back_to_customer_phone_when_no_shipping_phone(): void
+    {
+        $customer = $this->makeCustomer(['phone' => '03001234567']);
+        $this->makeOrder(['number' => '#PHONE2', 'customer_id' => $customer->id]);
+
+        $results = (new OrderLookup)->suggest('#PHONE2');
+
+        $this->assertCount(1, $results);
+        $this->assertSame('03001234567', $results[0]['consignee_phone']);
+    }
 }

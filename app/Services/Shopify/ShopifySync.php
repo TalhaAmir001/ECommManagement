@@ -127,7 +127,15 @@ class ShopifySync
                                 displayName
                                 email
                                 createdAt
-                                defaultAddress { country }
+                                defaultAddress {
+                                    address1
+                                    address2
+                                    city
+                                    province
+                                    zip
+                                    country
+                                    phone
+                                }
                             }
                         }
                     }
@@ -316,14 +324,22 @@ class ShopifySync
 
         $defaultAddress = $customer['defaultAddress'] ?? [];
 
+        $payload = [
+            'name' => ! empty($customer['displayName']) ? $customer['displayName'] : 'Unknown',
+            'email' => $email,
+            'country' => ! empty($defaultAddress['country']) ? $defaultAddress['country'] : 'Unknown',
+            'created_at' => $customer['createdAt'] ?? null,
+        ];
+
+        // Only carry the phone over when Shopify actually has one, so an
+        // update can never wipe a previously recorded number.
+        if (! empty($defaultAddress['phone'])) {
+            $payload['phone'] = $defaultAddress['phone'];
+        }
+
         return Customer::updateOrCreate(
             ['shopify_id' => $customer['id'] ?? null],
-            [
-                'name' => ! empty($customer['displayName']) ? $customer['displayName'] : 'Unknown',
-                'email' => $email,
-                'country' => ! empty($defaultAddress['country']) ? $defaultAddress['country'] : 'Unknown',
-                'created_at' => $customer['createdAt'] ?? null,
-            ],
+            $payload,
         );
     }
 
@@ -341,6 +357,13 @@ class ShopifySync
 
             $totalPriceSet = $order['totalPriceSet'] ?? [];
 
+            // The address the courier actually delivers to. Fall back to the
+            // customer's default address for orders without a shipping
+            // address (rare — e.g. draft orders or digital-only orders).
+            $shippingAddress = ! empty($order['shippingAddress'])
+                ? $order['shippingAddress']
+                : ($order['customer']['defaultAddress'] ?? []);
+
             $localOrder = Order::updateOrCreate(
                 ['shopify_id' => $order['id'] ?? null],
                 [
@@ -349,6 +372,14 @@ class ShopifySync
                     'status' => $this->mapStatus($order),
                     'financial_status' => $order['displayFinancialStatus'] ?? null,
                     'fulfillment_status' => $order['displayFulfillmentStatus'] ?? null,
+                    'shipping_name' => $shippingAddress['name'] ?? null,
+                    'shipping_address1' => $shippingAddress['address1'] ?? null,
+                    'shipping_address2' => $shippingAddress['address2'] ?? null,
+                    'shipping_city' => $shippingAddress['city'] ?? null,
+                    'shipping_province' => $shippingAddress['province'] ?? null,
+                    'shipping_zip' => $shippingAddress['zip'] ?? null,
+                    'shipping_country' => $shippingAddress['country'] ?? null,
+                    'shipping_phone' => $shippingAddress['phone'] ?? null,
                     'total' => (float) ($totalPriceSet['shopMoney']['amount'] ?? 0),
                     'created_at' => $order['createdAt'] ?? null,
                 ],
@@ -437,15 +468,16 @@ class ShopifySync
 
         $ingestor = new ShopifyFulfillmentProvider($provider);
 
-        // Use the order's customer default address as the consignee since
-        // fulfillments on a regular order ship there.
+        // Use the order's shipping address as the consignee — that's where
+        // the courier actually delivers. Falls back to the customer record
+        // (and its default address) when the order has no address stored.
         $customer = $localOrder->customer;
         $consignee = $customer ? [
-            'name' => $customer->name,
+            'name' => $localOrder->shipping_name ?: ($customer->name ?? null),
             'phone' => $customer->phone,
-            'address1' => null,
-            'address2' => null,
-            'city' => null,
+            'address1' => $localOrder->shipping_address1,
+            'address2' => $localOrder->shipping_address2,
+            'city' => $localOrder->shipping_city,
         ] : null;
 
         foreach ($this->fulfillmentsFrom($order) as $fulfillment) {

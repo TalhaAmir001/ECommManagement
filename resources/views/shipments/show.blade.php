@@ -220,6 +220,7 @@
                     <div class="mt-3 space-y-1 text-sm">
                         <p class="font-medium text-ink">{{ $shipment->consignee_name ?? '—' }}</p>
                         <p class="text-muted">{{ $shipment->consignee_phone ?? '' }}</p>
+                        <p class="text-muted">{{ $shipment->consignee_email ?? '' }}</p>
                         <p class="text-muted">{{ $shipment->consignee_address ?? '' }}</p>
                         <p class="text-muted">{{ $shipment->consignee_city ?? '' }}</p>
                     </div>

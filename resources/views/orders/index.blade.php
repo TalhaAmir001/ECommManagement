@@ -6,6 +6,11 @@
     @php
         $baseFilters = collect($filters)->except(['page', 'sort', 'direction'])->toArray();
 
+        $pollFilters = collect($filters)
+            ->only(['q', 'payment', 'fulfillment', 'status', 'date', 'from', 'to'])
+            ->filter(fn ($value) => $value !== '' && $value !== null)
+            ->toArray();
+
         $currentSort = $filters['sort'] ?? 'created_at';
         $currentDirection = $filters['direction'] ?? 'desc';
         $currentStatus = (string) ($filters['status'] ?? '');
@@ -73,6 +78,15 @@
                     <input type="hidden" name="status" value="{{ $currentStatus }}" />
 
                     <div class="flex flex-wrap items-center gap-2 lg:ml-auto">
+                        <label class="flex items-center gap-1.5 text-xs font-medium text-muted">
+                            <span class="whitespace-nowrap">Rows per page</span>
+                            <select name="per_page" onchange="this.form.submit()"
+                                class="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10">
+                                @foreach ($perPageOptions as $option)
+                                    <option value="{{ $option }}" @selected($perPage === $option)>{{ $option }}</option>
+                                @endforeach
+                            </select>
+                        </label>
                         <div class="inline-flex shrink-0 rounded-lg border border-line bg-canvas p-0.5">
                             @foreach (['' => 'All', 'open' => 'Open', 'closed' => 'Closed'] as $statusValue => $statusLabel)
                                 <a href="{{ $statusLink($statusValue) }}"
@@ -82,7 +96,7 @@
                             @endforeach
                         </div>
 
-                        <details class="relative" @if ($hasFilters) open @endif>
+                        <details class="relative">
                             <summary
                                 class="inline-flex cursor-pointer list-none items-center gap-2 rounded-lg border border-line bg-surface px-3.5 py-2 text-sm font-medium text-ink transition-colors hover:bg-canvas [&::-webkit-details-marker]:hidden">
                                 <x-dashboard.icon name="filter" class="h-4 w-4 text-faint" />
@@ -179,10 +193,7 @@
                 <table class="w-full min-w-[900px] text-left text-sm">
                     <thead>
                         <tr class="border-b border-line text-[11px] font-medium uppercase tracking-[0.1em] text-faint">
-                            <th class="w-12 py-3.5 pl-5 pr-2">
-                                <input type="checkbox" class="h-4 w-4 rounded border-line-strong accent-ink" aria-label="Select all orders" />
-                            </th>
-                            <th class="py-3.5 pr-4 font-medium">
+                            <th class="py-3.5 pl-5 pr-4 font-medium">
                                 <a href="{{ $sortLink('number') }}" class="inline-flex items-center gap-1 transition-colors hover:text-ink">Order
                                     <x-dashboard.icon :name="$currentSort === 'number' ? ($currentDirection === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down'" class="h-3 w-3 {{ $currentSort === 'number' ? 'text-ink' : 'text-faint' }}" />
                                 </a>
@@ -209,7 +220,7 @@
                             @include('orders._row', ['order' => $order])
                         @empty
                             <tr>
-                                <td colspan="9" class="px-4 py-16">
+                                <td colspan="8" class="px-4 py-16">
                                     <div class="mx-auto flex max-w-xs flex-col items-center text-center">
                                         <span class="flex h-12 w-12 items-center justify-center rounded-full bg-canvas text-faint">
                                             <x-dashboard.icon name="orders" class="h-5 w-5" />
@@ -231,6 +242,7 @@
                  data-since="{{ $orders->max('updated_at')?->toIso8601String() ?? '' }}"
                  data-poll-url="{{ route('orders.updates') }}"
                  data-rows-url="{{ route('orders.rows') }}"
+                 data-filters="{{ json_encode($pollFilters) }}"
                  style="display:none">
             </div>
 

@@ -25,6 +25,7 @@ use Illuminate\Support\Carbon;
  * @property int|null $order_id
  * @property string|null $matched_method
  * @property Carbon|null $matched_at
+ * @property string|null $consignee_email
  */
 class Shipment extends Model
 {
@@ -49,6 +50,7 @@ class Shipment extends Model
         'consignor_city',
         'consignee_name',
         'consignee_phone',
+        'consignee_email',
         'consignee_address',
         'consignee_city',
         'weight_kg',

@@ -14,6 +14,7 @@ use App\Services\Courier\OrderLookup;
 use App\Services\Courier\Providers\ManualProvider;
 use App\Services\Courier\Providers\ShopifyFulfillmentProvider;
 use App\Services\Courier\TrackingLinkResolver;
+use App\Services\Shopify\ShopifyTrackingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -415,6 +416,7 @@ class ShipmentController extends Controller
             'order_id' => ['nullable', 'integer', 'min:1'],
             'consignee_name' => ['nullable', 'string', 'max:128'],
             'consignee_phone' => ['nullable', 'string', 'max:64'],
+            'consignee_email' => ['nullable', 'string', 'max:128'],
             'consignee_address' => ['nullable', 'string', 'max:255'],
             'consignee_city' => ['nullable', 'string', 'max:128'],
             'weight_kg' => ['nullable', 'numeric', 'min:0'],
@@ -477,6 +479,15 @@ class ShipmentController extends Controller
                 'matched_method' => 'manual',
                 'matched_at' => now(),
             ])->save();
+        }
+
+        // Mirror the shipment's tracking number back onto the Shopify order
+        // so the store's fulfillment reflects it. The service ignores
+        // auto-generated "MNL-" placeholders and only logs (never throws on)
+        // failures, so this can never block the local creation.
+        if ($shipment->order_id !== null) {
+            $shipment->load('order');
+            app(ShopifyTrackingService::class)->pushTracking($shipment);
         }
 
         $message = $order !== null

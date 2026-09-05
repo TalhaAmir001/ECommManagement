@@ -24,6 +24,14 @@ class Order extends Model
         'status',
         'financial_status',
         'fulfillment_status',
+        'shipping_name',
+        'shipping_address1',
+        'shipping_address2',
+        'shipping_city',
+        'shipping_province',
+        'shipping_zip',
+        'shipping_country',
+        'shipping_phone',
         'courier_provider_id',
         'total',
         'created_at',
@@ -102,5 +110,65 @@ class Order extends Model
         // that as "unknown" rather than a genuine 0 kg parcel, so callers
         // keep deriving instead of settling on a meaningless zero.
         return $total > 0 ? round($total, 3) : null;
+    }
+
+    /**
+     * Total number of units on the order — the sum of every line item's
+     * quantity (e.g. 2× Shirt + 1× Cap → 3). Used as the default "pieces"
+     * figure when a shipment for this order is created from the UI.
+     */
+    public function totalItemQuantity(): int
+    {
+        return (int) $this->items->sum('quantity');
+    }
+
+    /**
+     * The numeric Shopify resource id of this order, or null when there is
+     * none.
+     *
+     * `orders.shopify_id` stores the GraphQL global id
+     * ("gid://shopify/Order/123456") for orders pulled from the store. The
+     * Shopify REST API and admin UI address an order by its trailing
+     * numeric resource id, so the "gid://shopify/Order/" prefix is stripped
+     * here. Accepts a bare numeric id too, and returns null for anything
+     * that doesn't end in digits (or for locally-created orders with no
+     * shopify_id).
+     */
+    public function shopifyNumericId(): ?string
+    {
+        $shopifyId = $this->shopify_id;
+
+        if ($shopifyId === null || $shopifyId === '') {
+            return null;
+        }
+
+        $numericId = str_contains($shopifyId, '/')
+            ? substr((string) strrchr($shopifyId, '/'), 1)
+            : $shopifyId;
+
+        return $numericId !== '' && ctype_digit($numericId) ? $numericId : null;
+    }
+
+    /**
+     * The Shopify admin detail-page URL for this order, or null when there
+     * is nothing to link to. Locally-created orders (no shopify_id) and
+     * stores without a configured shop handle yield null so callers never
+     * render a broken link.
+     */
+    public function shopifyAdminUrl(): ?string
+    {
+        $numericId = $this->shopifyNumericId();
+
+        if ($numericId === null) {
+            return null;
+        }
+
+        $shop = config('shopify.shop');
+
+        if (empty($shop)) {
+            return null;
+        }
+
+        return 'https://admin.shopify.com/store/'.$shop.'/orders/'.$numericId;
     }
 }
