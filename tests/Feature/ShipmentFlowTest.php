@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\Courier\ShipmentStatus;
 use App\Models\CourierProvider;
 use App\Models\Shipment;
+use App\Models\User;
 use App\Services\Courier\CourierProviderRegistry;
 use App\Services\Courier\Exceptions\CapabilityUnsupportedException;
 use App\Services\Courier\Providers\ManualProvider;
@@ -21,6 +22,7 @@ class ShipmentFlowTest extends TestCase
     {
         parent::setUp();
         $this->seed(\Database\Seeders\CourierProvidersSeeder::class);
+        $this->actingAs(User::factory()->create());
     }
 
     public function test_manual_provider_throws_when_asked_to_create_a_label(): void
@@ -123,10 +125,22 @@ class ShipmentFlowTest extends TestCase
         $this->assertSame('Ali Khan', $shipment->consignee_name);
     }
 
-    public function test_shipments_index_page_renders_with_manual_provider(): void
+    public function test_shipments_index_page_renders_linked_shipments_with_manual_provider(): void
     {
-        $this->makeShipment(['tracking_number' => 'MNP-INDEX-1']);
-        $this->makeShipment(['tracking_number' => 'MNP-INDEX-2', 'consignee_name' => 'Ali Khan']);
+        $orderOne = \App\Models\Order::factory()->create(['number' => '#INDEX-1']);
+        $orderTwo = \App\Models\Order::factory()->create(['number' => '#INDEX-2']);
+
+        $this->makeShipment([
+            'tracking_number' => 'MNP-INDEX-1',
+            'order_id' => $orderOne->id,
+            'matched_method' => 'manual',
+        ]);
+        $this->makeShipment([
+            'tracking_number' => 'MNP-INDEX-2',
+            'consignee_name' => 'Ali Khan',
+            'order_id' => $orderTwo->id,
+            'matched_method' => 'manual',
+        ]);
 
         $this->get('/shipments')
             ->assertOk()
@@ -135,6 +149,17 @@ class ShipmentFlowTest extends TestCase
             ->assertSee('MNP-INDEX-2')
             ->assertSee('Ali Khan')
             ->assertSee('Manual Entry');
+    }
+
+    public function test_shipments_index_page_hides_unlinked_shipments(): void
+    {
+        // A shipment with no linked order is hidden from the list — it can
+        // still be reached and linked from the shipment detail page.
+        $this->makeShipment(['tracking_number' => 'MNP-ORPHAN-1', 'consignee_name' => 'Ali Khan']);
+
+        $this->get('/shipments')
+            ->assertOk()
+            ->assertDontSee('MNP-ORPHAN-1');
     }
 
     public function test_shipments_show_page_renders_event_timeline(): void
@@ -210,7 +235,23 @@ class ShipmentFlowTest extends TestCase
 
         Http::fake([
             '*/admin/oauth/access_token' => Http::response(['access_token' => 'shpat_test', 'expires_in' => 3600], 200),
-            '*/fulfillments*' => Http::response(['fulfillments' => []]),
+            '*/graphql.json' => function (Request $request) {
+                $query = (string) ($request['query'] ?? '');
+
+                if (str_contains($query, 'ShopifyOrderFulfillmentState')) {
+                    return Http::response(['data' => [
+                        'order' => [
+                            'id' => 'gid://shopify/Order/9001',
+                            'fulfillments' => [],
+                            'fulfillmentOrders' => ['edges' => [['node' => [
+                                'id' => 'gid://shopify/FulfillmentOrder/1',
+                            ]]]],
+                        ],
+                    ]], 200);
+                }
+
+                return Http::response(['data' => ['fulfillmentCreate' => ['userErrors' => []]]], 200);
+            },
         ]);
 
         $customer = \App\Models\Customer::factory()->create();
@@ -232,20 +273,42 @@ class ShipmentFlowTest extends TestCase
         ]);
 
         Http::assertSent(function (Request $request) {
-            return $request->method() === 'POST'
-                && str_ends_with($request->url(), '/admin/api/2026-07/orders/9001/fulfillments.json')
-                && $request['fulfillment']['tracking_number'] === 'LP-TRACK-1';
+            $payload = json_decode((string) $request->body(), true);
+            $fulfillment = $payload['variables']['fulfillment'] ?? [];
+
+            return str_contains((string) $request->url(), '/graphql.json')
+                && str_contains((string) ($payload['query'] ?? ''), 'fulfillmentCreate')
+                && ($fulfillment['trackingInfo']['number'] ?? null) === 'LP-TRACK-1';
         });
     }
 
-    public function test_auto_generated_tracking_number_is_not_pushed_to_shopify(): void
+    public function test_auto_generated_tracking_number_is_pushed_to_shopify(): void
     {
         config()->set('shopify.shop', 'test-store');
         config()->set('shopify.client_id', 'client-id');
         config()->set('shopify.client_secret', 'client-secret');
         config()->set('shopify.api_version', '2026-07');
 
-        Http::fake();
+        Http::fake([
+            '*/admin/oauth/access_token' => Http::response(['access_token' => 'shpat_test', 'expires_in' => 3600], 200),
+            '*/graphql.json' => function (Request $request) {
+                $query = (string) ($request['query'] ?? '');
+
+                if (str_contains($query, 'ShopifyOrderFulfillmentState')) {
+                    return Http::response(['data' => [
+                        'order' => [
+                            'id' => 'gid://shopify/Order/9002',
+                            'fulfillments' => [],
+                            'fulfillmentOrders' => ['edges' => [['node' => [
+                                'id' => 'gid://shopify/FulfillmentOrder/1',
+                            ]]]],
+                        ],
+                    ]], 200);
+                }
+
+                return Http::response(['data' => ['fulfillmentCreate' => ['userErrors' => []]]], 200);
+            },
+        ]);
 
         $customer = \App\Models\Customer::factory()->create();
         $order = \App\Models\Order::factory()->create([
@@ -254,14 +317,24 @@ class ShipmentFlowTest extends TestCase
             'shopify_id' => 'gid://shopify/Order/9002',
         ]);
 
-        // No tracking number submitted → store() auto-generates an MNL- one,
-        // which is a local placeholder and must never reach Shopify.
+        // No tracking number submitted → store() auto-generates a 14-digit
+        // numeric one, which IS mirrored onto the Shopify order.
         $this->post('/shipments', [
             'order_id' => $order->id,
             'consignee_name' => 'Ali Khan',
         ])->assertRedirect();
 
-        Http::assertNothingSent();
+        $shipment = Shipment::query()->where('order_id', $order->id)->firstOrFail();
+        $this->assertMatchesRegularExpression('/^\d{14}$/', (string) $shipment->tracking_number);
+
+        Http::assertSent(function (Request $request) use ($shipment) {
+            $payload = json_decode((string) $request->body(), true);
+            $fulfillment = $payload['variables']['fulfillment'] ?? [];
+
+            return str_contains((string) $request->url(), '/graphql.json')
+                && str_contains((string) ($payload['query'] ?? ''), 'fulfillmentCreate')
+                && ($fulfillment['trackingInfo']['number'] ?? null) === $shipment->tracking_number;
+        });
     }
 
     private function resolveManual(): ManualProvider

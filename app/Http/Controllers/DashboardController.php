@@ -6,11 +6,15 @@ use App\Models\Customer;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
-use App\Services\JournalService;
+use App\Services\ProfitAndLossService;
+use App\Services\Shopify\ShopifySync;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
+use Throwable;
 
 class DashboardController extends Controller
 {
@@ -43,24 +47,54 @@ class DashboardController extends Controller
         $customersPrevious = (int) Customer::whereBetween('created_at', [$previousStart, $start])->count();
         $aovPrevious = $ordersPrevious > 0 ? round($revenuePrevious / $ordersPrevious, 2) : 0.0;
 
-        // P&L: gross profit + journal adjustment.
-        $cogsCurrent = $this->cogsBetween($start, $now);
-        $cogsPrevious = $this->cogsBetween($previousStart, $start);
-        $grossProfitCurrent = round($revenueCurrent - $cogsCurrent, 2);
-        $grossProfitPrevious = round($revenuePrevious - $cogsPrevious, 2);
+        // P&L: the same formula as the Audit report (Gross Sale → Total Net Profit).
+        $pnlService = app(ProfitAndLossService::class);
+        $pnlCurrent = $pnlService->totals($start, $now);
+        $pnlPrevious = $pnlService->totals($previousStart, $start);
 
-        $journal = app(JournalService::class);
-        $journalCurrent = $journal->pnlTotals($start, $now);
-        $journalPrevious = $journal->pnlTotals($previousStart, $start);
-        $netProfitCurrent = round($grossProfitCurrent + $journalCurrent['net_adjustment'], 2);
-        $netProfitPrevious = round($grossProfitPrevious + $journalPrevious['net_adjustment'], 2);
+        $pnl = [
+            'online_payments' => $pnlCurrent['online_payments'],
+            'cod_collected' => $pnlCurrent['cod_collected'],
+            'cod_cost' => $pnlCurrent['cod_cost'],
+            'net_cod' => $pnlCurrent['net_cod'],
+            'gross_sale' => $pnlCurrent['gross_sale'],
+            'returned_products' => $pnlCurrent['returned_products'],
+            'total_sale' => $pnlCurrent['total_sale'],
+            'cogs_vendor' => $pnlCurrent['cogs_vendor'],
+            'gross_profit' => $pnlCurrent['gross_profit'],
+            'shipping_received' => $pnlCurrent['shipping_received'],
+            'total_profit' => $pnlCurrent['total_profit'],
+            'courier_charges' => $pnlCurrent['courier_charges'],
+            'net_profit' => $pnlCurrent['net_profit'],
+            'expenses' => $pnlCurrent['expenses'],
+            'other_income' => $pnlCurrent['other_income'],
+            'tax' => $pnlCurrent['tax'],
+            'total_net_profit' => $pnlCurrent['total_net_profit'],
+            'total_net_profit_previous' => $pnlPrevious['total_net_profit'],
+            'total_net_profit_delta' => $this->percentChange(
+                $pnlCurrent['total_net_profit'],
+                $pnlPrevious['total_net_profit']
+            ),
+            'gross_profit_delta' => $this->percentChange(
+                $pnlCurrent['gross_profit'],
+                $pnlPrevious['gross_profit']
+            ),
+            'net_profit_delta' => $this->percentChange(
+                $pnlCurrent['net_profit'],
+                $pnlPrevious['net_profit']
+            ),
+            'gross_sale_delta' => $this->percentChange(
+                $pnlCurrent['gross_sale'],
+                $pnlPrevious['gross_sale']
+            ),
+        ];
 
         $stats = [
             'revenue' => [
-                'label' => 'Revenue',
-                'value' => $revenueCurrent,
+                'label' => 'Gross Sale',
+                'value' => $pnlCurrent['gross_sale'],
                 'format' => 'currency',
-                'delta' => $this->percentChange($revenueCurrent, $revenuePrevious),
+                'delta' => $this->percentChange($pnlCurrent['gross_sale'], $pnlPrevious['gross_sale']),
                 'spark' => array_column($daily['revenue'], 'value'),
             ],
             'orders' => [
@@ -86,18 +120,6 @@ class DashboardController extends Controller
             ],
         ];
 
-        $pnl = [
-            'gross_profit' => $grossProfitCurrent,
-            'gross_profit_delta' => $this->percentChange($grossProfitCurrent, $grossProfitPrevious),
-            'journal_expense' => $journalCurrent['total_expense'],
-            'journal_expense_previous' => $journalPrevious['total_expense'],
-            'journal_income' => $journalCurrent['total_income'],
-            'journal_income_previous' => $journalPrevious['total_income'],
-            'journal_net' => $journalCurrent['net_adjustment'],
-            'net_profit' => $netProfitCurrent,
-            'net_profit_delta' => $this->percentChange($netProfitCurrent, $netProfitPrevious),
-        ];
-
         return view('dashboard.index', [
             'range' => $range,
             'stats' => $stats,
@@ -108,6 +130,37 @@ class DashboardController extends Controller
             'topProducts' => $this->topProducts($start, $now, 5),
             'lowStock' => Product::where('stock', '<=', 10)->orderBy('stock')->take(6)->get(),
         ]);
+    }
+
+    /**
+     * Pull the latest products, customers and orders (including corrected
+     * product weights) from Shopify on demand, then backfill shipment weights
+     * for order-linked shipments that are still blank/zero.
+     *
+     * This is the action behind the dashboard's "Sync Shopify data" button —
+     * a UI trigger for the same code the scheduled `shopify:sync` command
+     * runs. Failures never bubble up as a 500: they are logged and flashed.
+     */
+    public function syncShopify(Request $request): RedirectResponse
+    {
+        try {
+            $counts = app(ShopifySync::class)->syncAll();
+
+            // Non-forced: only fills shipments whose weight is still null/0,
+            // so a courier-recorded weight is never overwritten.
+            Artisan::call('shipments:recalculate-weights');
+
+            $message = 'Shopify sync complete — '
+                .number_format($counts['products']).' products, '
+                .number_format($counts['customers']).' customers, '
+                .number_format($counts['orders']).' orders synced.';
+
+            return redirect()->route('dashboard')->with('status', $message);
+        } catch (Throwable $e) {
+            Log::warning('Manual Shopify sync failed', ['error' => $e->getMessage()]);
+
+            return redirect()->route('dashboard')->with('error', 'Shopify sync failed: '.$e->getMessage());
+        }
     }
 
     /**
@@ -171,19 +224,6 @@ class DashboardController extends Controller
             ->whereIn('status', self::ACTIVE_STATUSES)
             ->whereBetween('created_at', [$start, $end])
             ->count();
-    }
-
-    /**
-     * Total COGS (sum of product cost × quantity) between two dates.
-     */
-    private function cogsBetween(Carbon $start, Carbon $end): float
-    {
-        return (float) OrderItem::query()
-            ->join('orders', 'orders.id', '=', 'order_items.order_id')
-            ->join('products', 'products.id', '=', 'order_items.product_id')
-            ->whereIn('orders.status', self::ACTIVE_STATUSES)
-            ->whereBetween('orders.created_at', [$start, $end])
-            ->sum(DB::raw('order_items.quantity * products.cost'));
     }
 
     /**

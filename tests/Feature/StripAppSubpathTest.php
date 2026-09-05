@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\URL;
 use Tests\TestCase;
@@ -9,6 +10,14 @@ use Tests\TestCase;
 class StripAppSubpathTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // These pages are behind the auth middleware now, so sign in as an
+        // operator to observe the rendered content the stripping produced.
+        $this->actingAs(User::factory()->create());
+    }
 
     public function test_it_is_a_noop_when_app_url_has_no_subpath(): void
     {

@@ -7,6 +7,7 @@ use App\Models\CourierProvider;
 use App\Models\CourierRate;
 use App\Models\CourierZone;
 use App\Models\Shipment;
+use App\Models\User;
 use App\Services\Courier\DeliveryRateCalculator;
 use App\Services\ShippingFinanceService;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
@@ -21,6 +22,7 @@ class CourierRateCardTest extends TestCase
     {
         parent::setUp();
         $this->seed(\Database\Seeders\CourierProvidersSeeder::class);
+        $this->actingAs(User::factory()->create());
     }
 
     public function test_rates_page_renders_and_zone_is_created(): void

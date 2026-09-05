@@ -27,6 +27,7 @@
             'label' => 'Finance',
             'items' => [
                 ['icon' => 'book-open', 'label' => 'Journal', 'route' => 'journal.index'],
+                ['icon' => 'building', 'label' => 'Vendors', 'route' => 'vendors.index'],
             ],
         ],
         [
@@ -150,11 +151,8 @@
 
                 <div class="my-1 h-px bg-line" role="separator"></div>
 
-                {{-- Sign out targets the standard Laravel logout endpoint
-                     once the auth scaffold is added. Until then the form
-                     will 404 — wired now so the only thing left to do is
-                     add the route. --}}
-                <form method="POST" action="{{ url('/logout') }}" role="none">
+                {{-- Sign out --}}
+                <form method="POST" action="{{ route('logout') }}" role="none">
                     @csrf
                     <button type="submit"
                         role="menuitem"

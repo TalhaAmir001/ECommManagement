@@ -7,6 +7,7 @@ use App\Models\CourierProvider;
 use App\Models\Customer;
 use App\Models\Order;
 use App\Models\Shipment;
+use App\Models\User;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -19,6 +20,7 @@ class ShipmentFinanceAuditTest extends TestCase
     {
         parent::setUp();
         $this->seed(\Database\Seeders\CourierProvidersSeeder::class);
+        $this->actingAs(User::factory()->create());
     }
 
     public function test_manual_shipment_store_persists_courier_cost_and_cod(): void
@@ -129,19 +131,26 @@ class ShipmentFinanceAuditTest extends TestCase
 
         $this->get('/reports?preset=30d')
             ->assertOk()
-            ->assertSee('Shipping & courier money')
-            ->assertSee('Courier cost')
-            ->assertSee('COD collected')
-            // 450 + 120 courier cost
-            ->assertSee('₨570.00')
-            // only the delivered parcel's COD is counted
-            ->assertSee('₨1,000.00');
+            ->assertSee('Gross Sale')
+            ->assertSee('Net COD')
+            ->assertSee('Courier service charges')
+            ->assertSee('Shipping costs received')
+            // Delivered COD parcel: Net COD = 1000 − 450 courier cost.
+            ->assertSee('₨550.00')
+            // gross COD collected shows inside the Net COD breakdown
+            ->assertSee('₨1,000.00')
+            // the in-transit parcel's courier cost lands in Courier service charges
+            ->assertSee('₨120.00');
     }
 
     public function test_shipments_list_hides_money_but_detail_page_shows_it(): void
     {
+        $order = Order::factory()->create(['number' => '#INDEX-MONEY']);
+
         $shipment = $this->makeShipment([
             'tracking_number' => 'TST-INDEX-MONEY',
+            'order_id' => $order->id,
+            'matched_method' => 'manual',
             'status' => ShipmentStatus::Delivered->value,
             'cost' => 99.99,
             'cod_amount' => 1200,
@@ -190,6 +199,15 @@ class ShipmentFinanceAuditTest extends TestCase
 
         $this->assertSame(100.00, $totals['shipping_cost']);
         $this->assertSame(0.00, $totals['cod_collected']);
+    }
+
+    public function test_dashboard_renders_formula_pnl_strip(): void
+    {
+        $this->get('/dashboard')
+            ->assertOk()
+            ->assertSee('Total Net Profit')
+            ->assertSee('Gross Sale')
+            ->assertSee('CoGS (Vendor owed)');
     }
 
     private function manualProvider(): CourierProvider

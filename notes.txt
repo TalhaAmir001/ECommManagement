@@ -22,3 +22,8 @@ MNP,Trax
 Commands:
 php artisan queue:work --queue=shopify-webhooks --tries=5 --sleep=3
 
+Add Tracking number in order details - done
+Need to perform action "Collect Payment" in shopify store
+
+
+Gross Sale - Returned Products = Total Sale - CoGS(Vendor Owed) =  Gross Profit + Shipping Costs(Manual Shipments Only) = Total Profit - Courier Service Charges = Net Profit - Expeses - 4% Tax = Total Net Profit

@@ -4,6 +4,7 @@ namespace App\Services\Shopify;
 
 use App\Models\Shipment;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -15,10 +16,15 @@ use Throwable;
  * first fulfillment (which also marks the order fulfilled) or updates the
  * tracking on an existing fulfillment instead of duplicating it.
  *
+ * The write uses the Admin GraphQL API: the legacy REST create endpoint
+ * (POST /orders/{id}/fulfillments.json) no longer exists, and modern
+ * fulfillment creation requires a fulfillment-order access scope
+ * (write_merchant_managed_fulfillment_orders for a self-fulfilled store).
+ *
  * Failures are logged and swallowed on purpose: a Shopify outage or a
- * missing write_fulfillments scope must never block the local shipment from
- * being recorded. The next Shopify order sync stays the source of truth for
- * the store side.
+ * missing access scope must never block the local shipment from being
+ * recorded. The next Shopify order sync stays the source of truth for the
+ * store side.
  */
 class ShopifyTrackingService
 {
@@ -31,7 +37,8 @@ class ShopifyTrackingService
      *
      * Safe to call unconditionally: it silently no-ops for shipments with no
      * linked order, no Shopify order id, or no tracking number (e.g. rows
-     * that were ingested FROM Shopify — pushing those back would be circular).
+     * ingested FROM Shopify are not re-pushed because they are only ever
+     * saved by the ingest path, never through this service's callers).
      */
     public function pushTracking(Shipment $shipment): void
     {
@@ -56,55 +63,146 @@ class ShopifyTrackingService
 
         $trackingNumber = trim((string) $shipment->tracking_number);
 
-        // Only real courier tracking numbers are pushed. Auto-generated
-        // "MNL-XXXXXXXX" placeholders (the manual provider's stand-in
-        // numbers, pre-filled by the create form) must never reach Shopify —
-        // there is nothing real to attach yet.
-        if ($trackingNumber === '' || str_starts_with($trackingNumber, 'MNL-')) {
+        // Push any non-blank tracking number — typed or auto-generated. The
+        // auto-generated value is a realistic numeric consignment number that
+        // is safe to attach to the Shopify fulfillment.
+        if ($trackingNumber === '') {
             return;
         }
 
-        $orderId = $order->shopifyNumericId();
-        if ($orderId === null) {
+        $state = $this->fetchFulfillmentState($this->client->orderIdToGid($order->shopify_id));
+        if ($state === null) {
             return;
         }
 
-        $fulfillments = $this->client->rest('get', "orders/{$orderId}/fulfillments");
+        $tracking = ['number' => $trackingNumber];
+        $carrier = $shipment->carrier_name !== null ? trim((string) $shipment->carrier_name) : '';
+        if ($carrier !== '') {
+            $tracking['company'] = $carrier;
+        }
 
-        $trackingCompany = $shipment->carrier_name ?? null;
-
-        if (! empty($fulfillments['fulfillments'][0]['id'])) {
-            // The order already has a fulfillment (e.g. a partial one) —
-            // attach the tracking to it rather than creating a duplicate.
-            $fulfillmentId = $fulfillments['fulfillments'][0]['id'];
-
-            $this->client->rest('put', "orders/{$orderId}/fulfillments/{$fulfillmentId}", [
-                'fulfillment' => $this->withoutNulls([
-                    'tracking_number' => $trackingNumber,
-                    'tracking_company' => $trackingCompany,
-                ]),
-            ]);
+        if (isset($state['fulfillment_id'])) {
+            // The order already has a fulfillment — attach the tracking to it
+            // rather than creating a duplicate.
+            $this->updateExistingFulfillment($state['fulfillment_id'], $tracking);
 
             return;
         }
 
-        // No fulfillment yet: create one with the tracking info. This also
-        // marks the order fulfilled in Shopify.
-        $this->client->rest('post', "orders/{$orderId}/fulfillments", [
-            'fulfillment' => $this->withoutNulls([
-                'tracking_number' => $trackingNumber,
-                'tracking_company' => $trackingCompany,
-                'notify_customer' => false,
-            ]),
-        ]);
+        if (isset($state['fulfillment_order_id'])) {
+            $this->createFulfillment($state['fulfillment_order_id'], $tracking);
+        }
     }
 
     /**
-     * @param  array<string, mixed>  $values
-     * @return array<string, mixed>
+     * Fetch the order's existing fulfillments and first fulfillment order in
+     * a single GraphQL round-trip.
+     *
+     * @return array{fulfillment_id?: string, fulfillment_order_id?: string}|null
      */
-    private function withoutNulls(array $values): array
+    private function fetchFulfillmentState(string $orderGid): ?array
     {
-        return array_filter($values, static fn ($value) => $value !== null);
+        $data = $this->client->graphql(<<<'GRAPHQL'
+            query ShopifyOrderFulfillmentState($id: ID!) {
+                order(id: $id) {
+                    id
+                    fulfillments(first: 1) {
+                        id
+                    }
+                    fulfillmentOrders(first: 1) {
+                        edges {
+                            node {
+                                id
+                            }
+                        }
+                    }
+                }
+            }
+            GRAPHQL, ['id' => $orderGid]);
+
+        $order = $data['order'] ?? null;
+        if (! is_array($order)) {
+            return null;
+        }
+
+        $state = [];
+
+        $fulfillmentId = $order['fulfillments'][0]['id'] ?? null;
+        if (is_string($fulfillmentId) && $fulfillmentId !== '') {
+            $state['fulfillment_id'] = $fulfillmentId;
+        }
+
+        $fulfillmentOrderId = $order['fulfillmentOrders']['edges'][0]['node']['id'] ?? null;
+        if (is_string($fulfillmentOrderId) && $fulfillmentOrderId !== '') {
+            $state['fulfillment_order_id'] = $fulfillmentOrderId;
+        }
+
+        return $state;
+    }
+
+    /**
+     * @param  array<string, mixed>  $tracking
+     */
+    private function updateExistingFulfillment(string $fulfillmentId, array $tracking): void
+    {
+        $data = $this->client->graphql(<<<'GRAPHQL'
+            mutation ShopifyTrackingInfoUpdate($fulfillmentId: ID!, $trackingInfoInput: FulfillmentTrackingInput!) {
+                fulfillmentTrackingInfoUpdate(fulfillmentId: $fulfillmentId, trackingInfoInput: $trackingInfoInput) {
+                    userErrors { field message }
+                }
+            }
+            GRAPHQL, [
+            'fulfillmentId' => $fulfillmentId,
+            'trackingInfoInput' => $tracking,
+        ]);
+
+        $this->throwOnUserErrors($data['fulfillmentTrackingInfoUpdate'] ?? [], 'fulfillmentTrackingInfoUpdate');
+    }
+
+    /**
+     * Create a fulfillment on the order's first fulfillment order. Line items
+     * are intentionally omitted so Shopify fulfils every item on it.
+     *
+     * @param  array<string, mixed>  $tracking
+     */
+    private function createFulfillment(string $fulfillmentOrderId, array $tracking): void
+    {
+        $data = $this->client->graphql(<<<'GRAPHQL'
+            mutation ShopifyFulfillmentCreate($fulfillment: FulfillmentInput!) {
+                fulfillmentCreate(fulfillment: $fulfillment) {
+                    userErrors { field message }
+                }
+            }
+            GRAPHQL, [
+            'fulfillment' => [
+                'lineItemsByFulfillmentOrder' => [[
+                    'fulfillmentOrderId' => $fulfillmentOrderId,
+                ]],
+                'notifyCustomer' => false,
+                'trackingInfo' => $tracking,
+            ],
+        ]);
+
+        $this->throwOnUserErrors($data['fulfillmentCreate'] ?? [], 'fulfillmentCreate');
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function throwOnUserErrors(array $payload, string $mutation): void
+    {
+        $errors = $payload['userErrors'] ?? [];
+        if ($errors === []) {
+            return;
+        }
+
+        $messages = array_map(static function ($error) {
+            $field = trim((string) ($error['field'] ?? ''));
+            $message = trim((string) ($error['message'] ?? ''));
+
+            return $field !== '' ? $field.': '.$message : $message;
+        }, $errors);
+
+        throw new RuntimeException($mutation.' failed: '.implode('; ', array_filter($messages)));
     }
 }

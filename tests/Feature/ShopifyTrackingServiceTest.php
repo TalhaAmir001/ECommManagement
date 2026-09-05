@@ -30,13 +30,40 @@ class ShopifyTrackingServiceTest extends TestCase
     }
 
     /**
-     * Fake the Shopify OAuth token exchange plus a fulfillment-list response.
+     * Fake the Shopify OAuth token exchange and a GraphQL admin API that
+     * answers the fulfillment-state query and both mutations.
      */
-    private function fakeShopifyHttp(array $fulfillments = []): void
+    private function fakeShopifyGraphql(): void
     {
         Http::fake([
             '*/admin/oauth/access_token' => Http::response(['access_token' => 'shpat_test', 'expires_in' => 3600], 200),
-            '*/fulfillments*' => Http::response(['fulfillments' => $fulfillments]),
+            '*/graphql.json' => function (Request $request) {
+                $query = (string) ($request['query'] ?? '');
+
+                if (str_contains($query, 'ShopifyOrderFulfillmentState')) {
+                    return Http::response(['data' => [
+                        'order' => [
+                            'id' => 'gid://shopify/Order/123',
+                            'fulfillments' => [],
+                            'fulfillmentOrders' => [
+                                'edges' => [[
+                                    'node' => ['id' => 'gid://shopify/FulfillmentOrder/55'],
+                                ]],
+                            ],
+                        ],
+                    ]], 200);
+                }
+
+                if (str_contains($query, 'fulfillmentCreate')) {
+                    return Http::response(['data' => ['fulfillmentCreate' => ['userErrors' => []]]], 200);
+                }
+
+                if (str_contains($query, 'fulfillmentTrackingInfoUpdate')) {
+                    return Http::response(['data' => ['fulfillmentTrackingInfoUpdate' => ['userErrors' => []]]], 200);
+                }
+
+                return Http::response(['data' => []], 200);
+            },
         ]);
     }
 
@@ -75,17 +102,23 @@ class ShopifyTrackingServiceTest extends TestCase
 
     public function test_creates_a_fulfillment_when_the_order_has_none(): void
     {
-        $this->fakeShopifyHttp(); // empty list -> the service creates one
+        $this->fakeShopifyGraphql();
 
         $shipment = $this->makeShipment($this->makeOrder());
 
         app(ShopifyTrackingService::class)->pushTracking($shipment);
 
         Http::assertSent(function (Request $request) {
-            return $request->method() === 'POST'
-                && str_ends_with($request->url(), '/admin/api/2026-07/orders/123/fulfillments.json')
-                && $request['fulfillment']['tracking_number'] === 'LP-12345'
-                && $request['fulfillment']['tracking_company'] === 'Leopards';
+            $payload = json_decode((string) $request->body(), true);
+            $fulfillment = $payload['variables']['fulfillment'] ?? [];
+
+            return str_contains((string) $request->url(), '/graphql.json')
+                && str_contains((string) ($payload['query'] ?? ''), 'fulfillmentCreate')
+                && ($fulfillment['trackingInfo']['number'] ?? null) === 'LP-12345'
+                && ($fulfillment['trackingInfo']['company'] ?? null) === 'Leopards'
+                && ($fulfillment['notifyCustomer'] ?? null) === false
+                && ($fulfillment['lineItemsByFulfillmentOrder'][0]['fulfillmentOrderId'] ?? null) === 'gid://shopify/FulfillmentOrder/55'
+                && ! array_key_exists('fulfillmentOrderLineItems', $fulfillment['lineItemsByFulfillmentOrder'][0]);
         });
     }
 
@@ -93,12 +126,20 @@ class ShopifyTrackingServiceTest extends TestCase
     {
         Http::fake([
             '*/admin/oauth/access_token' => Http::response(['access_token' => 'shpat_test', 'expires_in' => 3600], 200),
-            '*/fulfillments*' => function (Request $request) {
-                if ($request->method() === 'GET') {
-                    return Http::response(['fulfillments' => [['id' => 55]]]);
+            '*/graphql.json' => function (Request $request) {
+                $query = (string) ($request['query'] ?? '');
+
+                if (str_contains($query, 'ShopifyOrderFulfillmentState')) {
+                    return Http::response(['data' => [
+                        'order' => [
+                            'id' => 'gid://shopify/Order/123',
+                            'fulfillments' => [['id' => 'gid://shopify/Fulfillment/9']],
+                            'fulfillmentOrders' => ['edges' => []],
+                        ],
+                    ]], 200);
                 }
 
-                return Http::response(['fulfillment' => ['id' => 55]]);
+                return Http::response(['data' => ['fulfillmentTrackingInfoUpdate' => ['userErrors' => []]]], 200);
             },
         ]);
 
@@ -107,21 +148,26 @@ class ShopifyTrackingServiceTest extends TestCase
         app(ShopifyTrackingService::class)->pushTracking($shipment);
 
         Http::assertSent(function (Request $request) {
-            return $request->method() === 'PUT'
-                && str_ends_with($request->url(), '/admin/api/2026-07/orders/123/fulfillments/55.json')
-                && $request['fulfillment']['tracking_number'] === 'LP-12345';
+            $payload = json_decode((string) $request->body(), true);
+            $variables = $payload['variables'] ?? [];
+
+            return str_contains((string) $request->url(), '/graphql.json')
+                && str_contains((string) ($payload['query'] ?? ''), 'fulfillmentTrackingInfoUpdate')
+                && ($variables['fulfillmentId'] ?? null) === 'gid://shopify/Fulfillment/9'
+                && ($variables['trackingInfoInput']['number'] ?? null) === 'LP-12345';
         });
 
-        // No fulfillment creation happens when one already exists (the only
-        // POST allowed is the OAuth token exchange, which has no fulfillment
-        // path).
-        Http::assertNotSent(fn (Request $request) => $request->method() === 'POST'
-            && str_contains($request->url(), '/fulfillments'));
+        // No fulfillment is created when one already exists.
+        Http::assertNotSent(function (Request $request) {
+            $payload = json_decode((string) $request->body(), true);
+
+            return str_contains((string) ($payload['query'] ?? ''), 'fulfillmentCreate');
+        });
     }
 
     public function test_noops_when_the_order_is_not_a_shopify_order(): void
     {
-        $this->fakeShopifyHttp();
+        $this->fakeShopifyGraphql();
 
         $shipment = $this->makeShipment($this->makeOrder(shopifyId: null));
 
@@ -132,7 +178,7 @@ class ShopifyTrackingServiceTest extends TestCase
 
     public function test_noops_when_the_shipment_has_no_tracking_number(): void
     {
-        $this->fakeShopifyHttp();
+        $this->fakeShopifyGraphql();
 
         $shipment = $this->makeShipment($this->makeOrder(), ['tracking_number' => '']);
 
@@ -141,22 +187,28 @@ class ShopifyTrackingServiceTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_noops_for_auto_generated_manual_placeholder_numbers(): void
+    public function test_pushes_an_auto_generated_numeric_tracking_number(): void
     {
-        $this->fakeShopifyHttp();
+        $this->fakeShopifyGraphql();
 
-        $shipment = $this->makeShipment($this->makeOrder(), ['tracking_number' => 'MNL-ABC12345']);
+        $shipment = $this->makeShipment($this->makeOrder(), ['tracking_number' => '78451230987126']);
 
         app(ShopifyTrackingService::class)->pushTracking($shipment);
 
-        Http::assertNothingSent();
+        Http::assertSent(function (Request $request) {
+            $payload = json_decode((string) $request->body(), true);
+            $fulfillment = $payload['variables']['fulfillment'] ?? [];
+
+            return str_contains((string) ($payload['query'] ?? ''), 'fulfillmentCreate')
+                && ($fulfillment['trackingInfo']['number'] ?? null) === '78451230987126';
+        });
     }
 
     public function test_logs_and_swallows_shopify_failures(): void
     {
         Http::fake([
             '*/admin/oauth/access_token' => Http::response(['access_token' => 'shpat_test', 'expires_in' => 3600], 200),
-            '*/fulfillments*' => Http::response(null, 500),
+            '*/graphql.json' => Http::response(null, 500),
         ]);
 
         $shipment = $this->makeShipment($this->makeOrder());
@@ -165,7 +217,7 @@ class ShopifyTrackingServiceTest extends TestCase
         app(ShopifyTrackingService::class)->pushTracking($shipment);
 
         // It attempted the write (and failed) instead of skipping silently.
-        Http::assertSent(fn (Request $request) => $request->method() === 'GET');
+        Http::assertSent(fn (Request $request) => str_contains((string) $request->url(), '/graphql.json'));
         $this->assertDatabaseHas('shipments', ['id' => $shipment->id]);
     }
 

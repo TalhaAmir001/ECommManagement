@@ -252,6 +252,14 @@
                                 {{ $shipment->cod_amount !== null ? format_money((float) $shipment->cod_amount) : '—' }}
                             </dd>
                         </div>
+                        @if ($shipment->shipping_charged !== null)
+                            <div>
+                                <dt class="text-xs text-muted">Shipping charged to customer</dt>
+                                <dd class="mt-0.5 font-medium text-positive tabular-nums">
+                                    {{ format_money((float) $shipment->shipping_charged) }}
+                                </dd>
+                            </div>
+                        @endif
                         <div>
                             <dt class="text-xs text-muted">Shipping cost</dt>
                             <dd class="mt-0.5 font-medium text-ink tabular-nums">
@@ -298,7 +306,7 @@
                         <form method="POST" action="{{ route('shipments.money', $shipment) }}" class="mt-3 grid grid-cols-2 gap-3 rounded-lg border border-line bg-canvas/40 p-3">
                             @csrf
                             <div>
-                                <label class="mb-1.5 block text-xs font-medium text-muted">Shipping cost</label>
+                                <label class="mb-1.5 block text-xs font-medium text-muted">Courier cost (you pay)</label>
                                 <input name="cost" type="number" step="0.01" min="0"
                                     value="{{ $shipment->cost !== null ? (float) $shipment->cost : '' }}"
                                     placeholder="{{ $shipment->cost === null && $shipment->estimatedCost() !== null ? '~'.number_format($shipment->estimatedCost(), 2).' estimated' : '' }}"
@@ -310,6 +318,15 @@
                                     value="{{ $shipment->cod_amount !== null ? (float) $shipment->cod_amount : '' }}"
                                     class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
                             </div>
+                            @if ($isManual)
+                                <div>
+                                    <label class="mb-1.5 block text-xs font-medium text-muted">Shipping charged to customer</label>
+                                    <input name="shipping_charged" type="number" step="0.01" min="0"
+                                        value="{{ $shipment->shipping_charged !== null ? (float) $shipment->shipping_charged : '' }}"
+                                        placeholder="Income the store receives"
+                                        class="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                                </div>
+                            @endif
                             <div>
                                 <label class="mb-1.5 block text-xs font-medium text-muted">Currency</label>
                                 <input name="currency" maxlength="3"
@@ -319,7 +336,8 @@
                             <div class="flex items-end">
                                 <button type="submit" class="rounded-lg bg-ink px-3 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Save</button>
                             </div>
-                            <p class="col-span-2 text-[11px] text-muted">Leave a field blank to clear it. These figures feed the courier-cost and COD rows on the Audit report.</p>
+                            <p class="col-span-2 text-[11px] text-muted">Leave a field blank to clear it. These figures feed the Audit report:
+                                courier cost is paid out, COD is collected on delivery, and "shipping charged to customer" is income received on manual shipments.</p>
                         </form>
                     </details>
                 </div>

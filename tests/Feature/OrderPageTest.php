@@ -7,6 +7,7 @@ use App\Models\CourierProvider;
 use App\Models\Customer;
 use App\Models\Order;
 use App\Models\Shipment;
+use App\Models\User;
 use Database\Seeders\CourierProvidersSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
@@ -16,6 +17,12 @@ use Tests\TestCase;
 class OrderPageTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->actingAs(User::factory()->create());
+    }
 
     private function makeOrder(array $attributes = []): Order
     {
@@ -335,7 +342,23 @@ class OrderPageTest extends TestCase
 
         Http::fake([
             '*/admin/oauth/access_token' => Http::response(['access_token' => 'shpat_test', 'expires_in' => 3600], 200),
-            '*/fulfillments*' => Http::response(['fulfillments' => []]),
+            '*/graphql.json' => function (Request $request) {
+                $query = (string) ($request['query'] ?? '');
+
+                if (str_contains($query, 'ShopifyOrderFulfillmentState')) {
+                    return Http::response(['data' => [
+                        'order' => [
+                            'id' => 'gid://shopify/Order/77',
+                            'fulfillments' => [],
+                            'fulfillmentOrders' => ['edges' => [['node' => [
+                                'id' => 'gid://shopify/FulfillmentOrder/1',
+                            ]]]],
+                        ],
+                    ]], 200);
+                }
+
+                return Http::response(['data' => ['fulfillmentCreate' => ['userErrors' => []]]], 200);
+            },
         ]);
 
         $order = $this->makeOrder(['number' => '#TRACKIT', 'shopify_id' => 'gid://shopify/Order/77']);
@@ -346,9 +369,12 @@ class OrderPageTest extends TestCase
         ])->assertRedirect();
 
         Http::assertSent(function (Request $request) {
-            return $request->method() === 'POST'
-                && str_ends_with($request->url(), '/admin/api/2026-07/orders/77/fulfillments.json')
-                && $request['fulfillment']['tracking_number'] === 'LP-77';
+            $payload = json_decode((string) $request->body(), true);
+            $fulfillment = $payload['variables']['fulfillment'] ?? [];
+
+            return str_contains((string) $request->url(), '/graphql.json')
+                && str_contains((string) ($payload['query'] ?? ''), 'fulfillmentCreate')
+                && ($fulfillment['trackingInfo']['number'] ?? null) === 'LP-77';
         });
     }
 }

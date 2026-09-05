@@ -2,22 +2,35 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\JournalAccount;
 use App\Models\JournalCategory;
 use App\Models\Order;
 use App\Services\JournalService;
-use App\Services\ShippingFinanceService;
+use App\Services\ProfitAndLossService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
+/**
+ * Audit (Profit & Loss) report.
+ *
+ * The headline numbers follow the agreed client formula:
+ *
+ *   Gross Sale        = Online payments + Net COD
+ *   Total Sale        = Gross Sale − Returned products
+ *   Gross Profit      = Total Sale − CoGS (Vendor owed)
+ *   Total Profit      = Gross Profit + Shipping received (manual shipments only)
+ *   Net Profit        = Total Profit − Courier service charges
+ *   Total Net Profit  = Net Profit − Expenses + Other income − 4% Tax
+ *
+ * Product/category breakdowns on this page stay product-level insights built
+ * from the "successful sales" order set (not the cash waterfall above).
+ */
 class AuditController extends Controller
 {
     /**
-     * Financial statuses that represent an actual sale (i.e. money was collected
-     * and not later voided). Shopify-aligned, with sensible fallbacks for the
+     * Financial statuses that represent an actual sale (i.e. money was
+     * collected and not later voided). Shopify-aligned, with fallbacks for
      * legacy lowercase statuses used by older seed data.
      *
      * @var list<string>
@@ -28,8 +41,8 @@ class AuditController extends Controller
     ];
 
     /**
-     * Order statuses that count as a real sale. We exclude any cancellation or
-     * refund-like states — anything in here is treated as "successful".
+     * Order statuses that count as a real sale. We exclude cancellations and
+     * refund-like states.
      *
      * @var list<string>
      */
@@ -60,73 +73,29 @@ class AuditController extends Controller
     {
         [$start, $end, $activePreset] = $this->resolveRange($request);
 
-        // Base query: every order in range that counts as a successful sale.
-        $base = Order::query()
-            ->with('items.product')
-            ->whereIn('financial_status', self::SUCCESS_FINANCIAL_STATUSES)
-            ->whereIn('status', self::SUCCESS_ORDER_STATUSES)
-            ->whereNotIn('financial_status', ['REFUNDED', 'VOIDED', 'refunded', 'voided']);
+        $pnl = app(ProfitAndLossService::class);
+        $totals = $pnl->totals($start, $end);
+        $monthly = $pnl->monthly($start, $end);
 
-        if ($start !== null) {
-            $base->where('orders.created_at', '>=', $start);
-        }
-        if ($end !== null) {
-            // Include the entire end day.
-            $base->where('orders.created_at', '<=', $end->copy()->endOfDay());
-        }
-
-        $totals = $this->summarize($base);
+        // Product / category insights use the successful-sales order set.
+        $base = $this->successfulOrdersQuery($start, $end);
         $byCategory = $this->byCategory($base);
         $topProducts = $this->topProducts($base, 10);
-        $monthly = $this->monthly($start, $end);
 
-        // Journal entries: posted expenses / other income inside the same range.
-        $journal = app(JournalService::class);
-        $journalTotals = $journal->pnlTotals(
+        $journalTotals = app(JournalService::class)->pnlTotals(
             $start?->copy()->startOfDay(),
             $end?->copy()->endOfDay()
         );
-        $journalMonthly = $journal->pnlMonthly($start, $end);
-
-        // Courier shipping money inside the same window. Courier cost is an
-        // operating expense; COD is cash collected on delivered parcels.
-        $shipping = app(ShippingFinanceService::class);
-        $shippingTotals = $shipping->totals($start, $end);
-        $shippingMonthly = $shipping->monthly($start, $end);
-
-        // Merge journal net adjustment into the monthly chart so the line is
-        // continuous. Net profit per month = (revenue - cogs - courier cost)
-        // + journal net.
-        $monthly = $this->mergeJournalIntoMonthly($monthly, $journalMonthly);
-        $monthly = $this->mergeShippingIntoMonthly($monthly, $shippingMonthly);
-
-        // Net profit after courier costs and journal adjustments.
-        $totals['gross_profit'] = $totals['profit'];
-        $totals['journal_expense'] = $journalTotals['total_expense'];
-        $totals['journal_income'] = $journalTotals['total_income'];
-        $totals['journal_net'] = $journalTotals['net_adjustment'];
-        $totals['shipping_cost'] = $shippingTotals['shipping_cost'];
-        $totals['shipping_actual_cost'] = $shippingTotals['actual_cost'];
-        $totals['shipping_estimated_cost'] = $shippingTotals['estimated_cost'];
-        $totals['cod_collected'] = $shippingTotals['cod_collected'];
-        $totals['shipping_net'] = $shippingTotals['shipping_net'];
-        $totals['profit'] = round($totals['gross_profit'] - $totals['shipping_cost'] + $totals['journal_net'], 2);
-        $totals['margin'] = $totals['revenue'] > 0
-            ? round(($totals['profit'] / $totals['revenue']) * 100, 1)
-            : 0.0;
-        $totals['avg_profit_per_order'] = $totals['orders'] > 0
-            ? round($totals['profit'] / $totals['orders'], 2)
-            : 0.0;
-
         $journalByCategory = $this->journalBreakdownByCategory($journalTotals['by_category']);
 
         return view('audit.index', [
             'totals' => $totals,
+            'monthly' => $monthly,
             'byCategory' => $byCategory,
             'topProducts' => $topProducts,
-            'monthly' => $monthly,
-            'journalByCategory' => $journalByCategory,
             'journalTotals' => $journalTotals,
+            'journalByCategory' => $journalByCategory,
+            'taxRate' => $pnl->taxRate(),
             'range' => [
                 'preset' => $activePreset,
                 'start' => $start,
@@ -136,6 +105,28 @@ class AuditController extends Controller
             'presets' => self::DATE_PRESETS,
         ]);
     }
+
+    /**
+     * Successful-sales order query used for product/category insights.
+     */
+    private function successfulOrdersQuery(?Carbon $start, ?Carbon $end): Builder
+    {
+        $query = Order::query()
+            ->with('items.product')
+            ->whereIn('financial_status', self::SUCCESS_FINANCIAL_STATUSES)
+            ->whereIn('status', self::SUCCESS_ORDER_STATUSES)
+            ->whereNotIn('financial_status', ['REFUNDED', 'VOIDED', 'refunded', 'voided']);
+
+        if ($start !== null) {
+            $query->where('orders.created_at', '>=', $start);
+        }
+        if ($end !== null) {
+            $query->where('orders.created_at', '<=', $end->copy()->endOfDay());
+        }
+
+        return $query;
+    }
+
 
     /**
      * Resolve the date range from the query string.
@@ -148,7 +139,6 @@ class AuditController extends Controller
         $customFrom = (string) $request->query('from', '');
         $customTo = (string) $request->query('to', '');
 
-        // Custom range wins when both endpoints are provided.
         if ($customFrom !== '' && $customTo !== '') {
             try {
                 $start = Carbon::parse($customFrom)->startOfDay();
@@ -172,55 +162,23 @@ class AuditController extends Controller
     }
 
     /**
-     * Compute headline totals for the report: revenue, COGS, profit, margin.
-     *
-     * @return array{
-     *     orders: int,
-     *     units: int,
-     *     revenue: float,
-     *     cogs: float,
-     *     profit: float,
-     *     margin: float,
-     *     avg_order_value: float,
-     *     avg_profit_per_order: float
-     * }
+     * Build a short, human-readable label for the active date range.
      */
-    private function summarize(Builder $base): array
+    private function humanRange(string $preset, ?Carbon $start, ?Carbon $end): string
     {
-        $orderRows = (clone $base)
-            ->selectRaw('COUNT(*) as order_count, COALESCE(SUM(orders.total), 0) as revenue')
-            ->first();
+        if ($preset === 'custom' && $start && $end) {
+            return $start->format('M j, Y').' – '.$end->format('M j, Y');
+        }
+        if ($preset === 'all') {
+            return 'All time';
+        }
+        if (isset(self::DATE_PRESETS[$preset])) {
+            return self::DATE_PRESETS[$preset]['label'];
+        }
 
-        $orders = (int) ($orderRows->order_count ?? 0);
-        $revenue = (float) ($orderRows->revenue ?? 0);
-
-        $itemRows = (clone $base)
-            ->join('order_items', 'order_items.order_id', '=', 'orders.id')
-            ->join('products', 'products.id', '=', 'order_items.product_id')
-            ->selectRaw('COALESCE(SUM(order_items.quantity), 0) as units,
-                         COALESCE(SUM(order_items.quantity * order_items.unit_price), 0) as item_revenue,
-                         COALESCE(SUM(order_items.quantity * products.cost), 0) as cogs')
-            ->first();
-
-        $units = (int) ($itemRows->units ?? 0);
-        $itemRevenue = (float) ($itemRows->item_revenue ?? 0);
-        $cogs = (float) ($itemRows->cogs ?? 0);
-
-        // Trust the recomputed item revenue when it's present; fall back to orders.total.
-        $effectiveRevenue = $itemRevenue > 0 ? $itemRevenue : $revenue;
-        $profit = round($effectiveRevenue - $cogs, 2);
-        $margin = $effectiveRevenue > 0 ? round(($profit / $effectiveRevenue) * 100, 1) : 0.0;
-
-        return [
-            'orders' => $orders,
-            'units' => $units,
-            'revenue' => round($effectiveRevenue, 2),
-            'cogs' => round($cogs, 2),
-            'profit' => $profit,
-            'margin' => $margin,
-            'avg_order_value' => $orders > 0 ? round($effectiveRevenue / $orders, 2) : 0.0,
-            'avg_profit_per_order' => $orders > 0 ? round($profit / $orders, 2) : 0.0,
-        ];
+        return $start && $end
+            ? $start->format('M j, Y').' – '.$end->format('M j, Y')
+            : 'All time';
     }
 
     /**
@@ -259,7 +217,7 @@ class AuditController extends Controller
     /**
      * Most profitable products inside the selected range.
      *
-     * @return array<int, array{name: string, sku: string, category: string, units: int, revenue: float, cogs: float, profit: float, margin: float}>
+     * @return array<int, array{name: string, sku: ?string, category: string, units: int, revenue: float, cogs: float, profit: float, margin: float}>
      */
     private function topProducts(Builder $base, int $limit): array
     {
@@ -296,174 +254,9 @@ class AuditController extends Controller
         })->all();
     }
 
-    /**
-     * Cross-database SQL expression producing a "Y-m" month key from a
-     * timestamp column. Kept in one place so monthly reports run on the
-     * MySQL production database and the SQLite test suite alike.
-     */
-    private function monthExpr(string $column): string
-    {
-        return match (DB::connection()->getDriverName()) {
-            'mysql' => "DATE_FORMAT({$column}, '%Y-%m')",
-            'pgsql' => "to_char({$column}, 'YYYY-MM')",
-            default => "strftime('%Y-%m', {$column})",
-        };
-    }
-
-    /**
-     * Monthly profit & loss view, oldest to newest. Always covers the last
-     * 12 months (or the range itself, whichever is shorter) so the chart and
-     * the table stay useful even for short custom windows.
-     *
-     * @return array<int, array{key: string, label: string, revenue: float, cogs: float, profit: float, margin: float, orders: int}>
-     */
-    private function monthly(?Carbon $start, ?Carbon $end): array
-    {
-        $today = Carbon::now()->endOfDay();
-        $windowEnd = $end !== null ? $end->copy()->endOfDay() : $today;
-        $windowStart = $start !== null ? $start->copy()->startOfDay() : $today->copy()->subMonths(11)->startOfMonth();
-
-        $cursor = $windowStart->copy()->startOfMonth();
-        $endCursor = $windowEnd->copy()->startOfMonth();
-
-        // Build a month skeleton so empty months still render with zeros.
-        $months = [];
-        while ($cursor->lte($endCursor)) {
-            $key = $cursor->format('Y-m');
-            $months[$key] = [
-                'key' => $key,
-                'label' => $cursor->format('M Y'),
-                'revenue' => 0.0,
-                'cogs' => 0.0,
-                'profit' => 0.0,
-                'margin' => 0.0,
-                'orders' => 0,
-            ];
-            $cursor->addMonth();
-        }
-
-        $monthExpr = $this->monthExpr('orders.created_at');
-
-        $query = Order::query()
-            ->join('order_items', 'order_items.order_id', '=', 'orders.id')
-            ->join('products', 'products.id', '=', 'order_items.product_id')
-            ->whereIn('orders.financial_status', self::SUCCESS_FINANCIAL_STATUSES)
-            ->whereIn('orders.status', self::SUCCESS_ORDER_STATUSES)
-            ->whereNotIn('orders.financial_status', ['REFUNDED', 'VOIDED', 'refunded', 'voided'])
-            ->whereBetween('orders.created_at', [$windowStart, $windowEnd])
-            ->selectRaw($monthExpr.' as month_key,
-                         SUM(order_items.quantity * order_items.unit_price) as revenue,
-                         SUM(order_items.quantity * products.cost) as cogs,
-                         COUNT(DISTINCT orders.id) as orders')
-            ->groupBy('month_key')
-            ->get();
-
-        foreach ($query as $row) {
-            $key = (string) $row->month_key;
-            if (! isset($months[$key])) {
-                continue;
-            }
-            $revenue = (float) $row->revenue;
-            $cogs = (float) $row->cogs;
-            $months[$key]['revenue'] = round($revenue, 2);
-            $months[$key]['cogs'] = round($cogs, 2);
-            $months[$key]['profit'] = round($revenue - $cogs, 2);
-            $months[$key]['margin'] = $revenue > 0 ? round((($revenue - $cogs) / $revenue) * 100, 1) : 0.0;
-            $months[$key]['orders'] = (int) $row->orders;
-        }
-
-        return array_values($months);
-    }
-
-    /**
-     * Build a short, human-readable label for the active date range.
-     */
-    private function humanRange(string $preset, ?Carbon $start, ?Carbon $end): string
-    {
-        if ($preset === 'custom' && $start && $end) {
-            return $start->format('M j, Y').' – '.$end->format('M j, Y');
-        }
-        if ($preset === 'all') {
-            return 'All time';
-        }
-        if (isset(self::DATE_PRESETS[$preset])) {
-            return self::DATE_PRESETS[$preset]['label'];
-        }
-
-        return $start && $end
-            ? $start->format('M j, Y').' – '.$end->format('M j, Y')
-            : 'All time';
-    }
-
-    /**
-     * Merge the per-month journal adjustment into the sales monthly series.
-     *
-     * @param  array<int, array<string, mixed>>  $monthly
-     * @param  array<int, array{key: string, label: string, expense: float, income: float, net: float}>  $journalMonthly
-     * @return array<int, array<string, mixed>>
-     */
-    private function mergeJournalIntoMonthly(array $monthly, array $journalMonthly): array
-    {
-        $journalByKey = [];
-        foreach ($journalMonthly as $row) {
-            $journalByKey[$row['key']] = $row;
-        }
-
-        foreach ($monthly as $i => $row) {
-            $journal = $journalByKey[$row['key']] ?? null;
-            $journalNet = $journal ? (float) $journal['net'] : 0.0;
-            $journalExpense = $journal ? (float) $journal['expense'] : 0.0;
-            $journalIncome = $journal ? (float) $journal['income'] : 0.0;
-
-            $monthly[$i]['journal_expense'] = $journalExpense;
-            $monthly[$i]['journal_income'] = $journalIncome;
-            $monthly[$i]['journal_net'] = $journalNet;
-            $monthly[$i]['profit'] = round((float) $row['profit'] + $journalNet, 2);
-            $monthly[$i]['margin'] = (float) $row['revenue'] > 0
-                ? round(($monthly[$i]['profit'] / (float) $row['revenue']) * 100, 1)
-                : 0.0;
-        }
-
-        return $monthly;
-    }
-
-    /**
-     * Deduct courier cost from each month's profit and attach the shipping
-     * money columns used by the monthly table. Runs after the journal merge
-     * so the final profit per month is gross - courier cost + journal net.
-     *
-     * @param  array<int, array<string, mixed>>  $monthly
-     * @param  array<int, array{key: string, label: string, shipping_cost: float, cod_collected: float}>  $shippingMonthly
-     * @return array<int, array<string, mixed>>
-     */
-    private function mergeShippingIntoMonthly(array $monthly, array $shippingMonthly): array
-    {
-        $shippingByKey = [];
-        foreach ($shippingMonthly as $row) {
-            $shippingByKey[$row['key']] = $row;
-        }
-
-        foreach ($monthly as $i => $row) {
-            $shipping = $shippingByKey[$row['key']] ?? null;
-            $cost = $shipping ? (float) $shipping['shipping_cost'] : 0.0;
-            $cod = $shipping ? (float) $shipping['cod_collected'] : 0.0;
-
-            $monthly[$i]['shipping_cost'] = round($cost, 2);
-            $monthly[$i]['cod_collected'] = round($cod, 2);
-            $monthly[$i]['profit'] = round((float) $row['profit'] - $cost, 2);
-            $monthly[$i]['margin'] = (float) $row['revenue'] > 0
-                ? round(($monthly[$i]['profit'] / (float) $row['revenue']) * 100, 1)
-                : 0.0;
-        }
-
-        return $monthly;
-    }
 
     /**
      * Format the journal P&L by-category list for the audit view.
-     *
-     * Returns each category with its default account and amount, signed so
-     * the view can show +/− without re-deriving signs.
      *
      * @param  \Illuminate\Support\Collection<int, object>  $byCategory
      * @return array<int, array{name: string, type: string, account: string, color: ?string, amount: float, signed: float}>
@@ -499,7 +292,6 @@ class AuditController extends Controller
             ];
         }
 
-        // Largest impact first.
         usort($rows, function ($a, $b) {
             return abs($b['signed']) <=> abs($a['signed']);
         });
@@ -507,3 +299,4 @@ class AuditController extends Controller
         return $rows;
     }
 }
+

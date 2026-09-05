@@ -196,6 +196,7 @@ class OrderController extends Controller
             'carrier_name' => ['nullable', 'string', 'max:64'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'cod_amount' => ['nullable', 'numeric', 'min:0'],
+            'shipping_charged' => ['nullable', 'numeric', 'min:0'],
             'currency' => ['nullable', 'string', 'size:3'],
         ]);
 
@@ -213,6 +214,7 @@ class OrderController extends Controller
             'status' => ShipmentStatus::Created->value,
             'cost' => $data['cost'] ?? null,
             'cod_amount' => $data['cod_amount'] ?? null,
+            'shipping_charged' => $data['shipping_charged'] ?? null,
             'currency' => $data['currency'] ?? config('couriers.default_currency', 'PKR'),
             'shipped_at' => now(),
             'last_event_at' => now(),

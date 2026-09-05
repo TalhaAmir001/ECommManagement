@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Enums\Courier\ShipmentStatus;
 use App\Models\CourierProvider;
 use App\Models\Shipment;
+use App\Models\User;
 use App\Services\Courier\Providers\GenericHttpProvider;
 use Database\Seeders\CourierProvidersSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -18,6 +19,7 @@ class CourierSettingsPageTest extends TestCase
     {
         parent::setUp();
         $this->seed(CourierProvidersSeeder::class);
+        $this->actingAs(User::factory()->create());
     }
 
     public function test_settings_page_lists_all_providers(): void

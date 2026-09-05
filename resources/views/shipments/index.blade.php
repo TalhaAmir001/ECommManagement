@@ -199,15 +199,27 @@
                     </div>
                     <div>
                         <label class="mb-1.5 block text-xs font-medium text-muted">COD amount</label>
-                        <input name="cod_amount" type="number" step="0.01" min="0" class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                        <input name="cod_amount" type="number" step="0.01" min="0" placeholder="Cash to collect on delivery"
+                            class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
                     </div>
                     <div>
-                        <label class="mb-1.5 block text-xs font-medium text-muted">Shipping cost</label>
-                        <input name="cost" type="number" step="0.01" min="0" class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                        <label class="mb-1.5 block text-xs font-medium text-muted">Courier cost (you pay)</label>
+                        <input name="cost" type="number" step="0.01" min="0" placeholder="What the courier charges"
+                            class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
+                    </div>
+                    <div>
+                        <label class="mb-1.5 block text-xs font-medium text-muted">Shipping charged to customer</label>
+                        <input name="shipping_charged" type="number" step="0.01" min="0" placeholder="Income you receive"
+                            class="w-full rounded-lg border border-line bg-canvas px-2.5 py-2 text-sm text-ink placeholder:text-faint focus:border-ink focus:outline-none focus:ring-2 focus:ring-ink/10" />
                     </div>
                     <div class="flex items-end gap-2">
                         <button type="submit" class="rounded-lg bg-ink px-3.5 py-2 text-xs font-medium text-surface transition-colors hover:bg-ink/90">Create shipment</button>
                     </div>
+                    <p class="col-span-full text-[11px] leading-relaxed text-muted">
+                        <span class="font-medium text-ink">Shipping charged to customer</span> is money the store <em>receives</em> for
+                        delivery and is added to profit on the Audit report. <span class="font-medium text-ink">Courier cost</span> is what
+                        you pay the courier and is subtracted. COD amount is the cash collected from the customer on delivery.
+                    </p>
                 </form>
             </div>
         @endif

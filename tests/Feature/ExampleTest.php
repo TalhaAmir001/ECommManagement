@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -10,20 +11,21 @@ class ExampleTest extends TestCase
     use RefreshDatabase;
 
     /**
-     * A basic test example.
+     * A guest is funneled to the sign-in page for every dashboard area.
      */
-    public function test_the_root_route_redirects_to_dashboard(): void
+    public function test_guests_are_sent_to_the_login_page(): void
     {
-        $response = $this->get('/');
-
-        $response->assertRedirect(route('dashboard'));
+        $this->get('/')->assertRedirect(route('login'));
     }
 
+    /**
+     * An authenticated operator can reach the dashboard.
+     */
     public function test_the_dashboard_returns_a_successful_response(): void
     {
-        $response = $this->get('/dashboard');
-
-        $response->assertStatus(200);
+        $this->actingAs(User::factory()->create())
+            ->get('/dashboard')
+            ->assertStatus(200);
     }
 }
 

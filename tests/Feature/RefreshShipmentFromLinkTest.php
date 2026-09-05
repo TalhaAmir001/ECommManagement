@@ -6,6 +6,7 @@ use App\Enums\Courier\ShipmentStatus;
 use App\Jobs\RefreshShipmentFromLinkJob;
 use App\Models\CourierProvider;
 use App\Models\Shipment;
+use App\Models\User;
 use App\Services\Courier\TrackingLinkResolver;
 use Database\Seeders\CourierProvidersSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -20,6 +21,7 @@ class RefreshShipmentFromLinkTest extends TestCase
     {
         parent::setUp();
         $this->seed(CourierProvidersSeeder::class);
+        $this->actingAs(User::factory()->create());
     }
 
     public function test_job_updates_shipment_status_from_a_delivered_tracking_page(): void

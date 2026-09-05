@@ -8,6 +8,7 @@ use App\Models\Customer;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\Shipment;
+use App\Models\User;
 use Database\Seeders\CourierProvidersSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -27,6 +28,7 @@ class ShipmentOrderAssociationTest extends TestCase
     {
         parent::setUp();
         $this->seed(CourierProvidersSeeder::class);
+        $this->actingAs(User::factory()->create());
     }
 
     private function makeOrder(array $attrs = []): Order

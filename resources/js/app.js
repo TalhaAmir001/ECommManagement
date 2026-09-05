@@ -579,15 +579,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!url) return;
 
     function generate() {
-        // Optimistic client-side prefix so the field updates instantly.
+        // Optimistic client-side value so the field updates instantly.
         // The server-side value always wins on submit — this just makes
         // the UX feel snappy when the user clicks "Generate".
-        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-        let random = '';
-        for (let i = 0; i < 8; i++) {
-            random += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+        let value = String(Math.floor(Math.random() * 9) + 1); // first digit 1-9
+        for (let i = 0; i < 13; i++) {
+            value += String(Math.floor(Math.random() * 10));
         }
-        input.value = 'MNL-' + random;
+        input.value = value;
     }
 
     // If the operator hasn't touched the field yet, fill it on load.

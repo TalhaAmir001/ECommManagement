@@ -33,6 +33,10 @@ class ShipmentController extends Controller
 
         $query = Shipment::query()
             ->with(['provider', 'order.customer'])
+            // Only shipments linked to an order appear in the list; orphaned /
+            // unlinked rows are hidden. They can still be reached and linked
+            // from the shipment detail page.
+            ->whereNotNull('order_id')
             ->orderByDesc('last_event_at')
             ->orderByDesc('id');
 
@@ -422,6 +426,7 @@ class ShipmentController extends Controller
             'weight_kg' => ['nullable', 'numeric', 'min:0'],
             'pieces' => ['nullable', 'integer', 'min:1'],
             'cod_amount' => ['nullable', 'numeric', 'min:0'],
+            'shipping_charged' => ['nullable', 'numeric', 'min:0'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'currency' => ['nullable', 'string', 'size:3'],
             'status' => ['nullable', 'string', 'max:32'],
@@ -434,10 +439,10 @@ class ShipmentController extends Controller
         $order = $lookup->findById($data['order_id'] ?? null);
 
         // Auto-generate a tracking number when the operator leaves the
-        // field blank. The "MNL-" prefix makes manual entries visually
-        // distinct from courier-issued numbers at a glance. The loop
-        // protects against the (very unlikely) case of an 8-char random
-        // collision; falling back to a hex value guarantees uniqueness.
+        // field blank. It is a realistic 14-digit numeric consignment number
+        // so it can be mirrored straight onto the Shopify fulfillment. The
+        // loop protects against the (very unlikely) case of a collision,
+        // falling back to a guaranteed-unique value.
         $trackingInput = trim((string) ($data['tracking_number'] ?? ''));
         $trackingNumber = $trackingInput !== ''
             ? $trackingInput
@@ -481,10 +486,10 @@ class ShipmentController extends Controller
             ])->save();
         }
 
-        // Mirror the shipment's tracking number back onto the Shopify order
-        // so the store's fulfillment reflects it. The service ignores
-        // auto-generated "MNL-" placeholders and only logs (never throws on)
-        // failures, so this can never block the local creation.
+        // Mirror the shipment's tracking number (typed or auto-generated)
+        // back onto the Shopify order so the store's fulfillment reflects it.
+        // The service only logs (never throws on) failures, so this can never
+        // block the local creation.
         if ($shipment->order_id !== null) {
             $shipment->load('order');
             app(ShopifyTrackingService::class)->pushTracking($shipment);
@@ -577,12 +582,14 @@ class ShipmentController extends Controller
     {
         $data = $request->validate([
             'cod_amount' => ['nullable', 'numeric', 'min:0'],
+            'shipping_charged' => ['nullable', 'numeric', 'min:0'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'currency' => ['nullable', 'string', 'size:3'],
         ]);
 
         $shipment->forceFill([
             'cod_amount' => $data['cod_amount'] ?? null,
+            'shipping_charged' => $data['shipping_charged'] ?? null,
             'cost' => $data['cost'] ?? null,
             'currency' => $data['currency'] !== null
                 ? strtoupper($data['currency'])
@@ -596,30 +603,29 @@ class ShipmentController extends Controller
     /**
      * Generate a unique tracking number for a manual shipment.
      *
-     * Format: `MNL-XXXXXXXX` where X is drawn from an alphabet that
-     * omits the easily-confused O/0/I/1/L characters. The loop is
-     * paranoid about uniqueness — 36^8 ≈ 2.8 trillion combinations
-     * means a collision is essentially impossible — but the DB check
-     * is cheap insurance.
+     * Format: a 14-digit numeric string (e.g. 78451230987126) that reads like
+     * a real courier consignment number, so it can be pushed straight onto a
+     * Shopify fulfillment. The first digit is 1-9 (no leading zero). The
+     * loop is paranoid about uniqueness — 9×10^13 combinations makes a
+     * collision essentially impossible — but the DB check is cheap insurance.
      */
     public function generateManualTrackingNumber(): string
     {
-        $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
         for ($attempt = 0; $attempt < 5; $attempt++) {
-            $random = '';
-            for ($i = 0; $i < 8; $i++) {
-                $random .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+            $candidate = (string) random_int(1, 9);
+
+            for ($i = 0; $i < 13; $i++) {
+                $candidate .= (string) random_int(0, 9);
             }
-            $candidate = 'MNL-'.$random;
+
             if (! Shipment::query()->where('tracking_number', $candidate)->exists()) {
                 return $candidate;
             }
         }
 
-        // Should be unreachable in practice, but the hex fallback
-        // guarantees we always return *something* unique.
-        return 'MNL-'.strtoupper(bin2hex(random_bytes(4)));
+        // Should be unreachable in practice, but the fallback guarantees we
+        // always return *something* unique (also exactly 14 digits).
+        return (string) random_int(10000000000000, 99999999999999);
     }
 
     /**
